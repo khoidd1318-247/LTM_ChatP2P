@@ -38,8 +38,8 @@ CẤU TRÚC:
         └── build/                  # Nơi chứa kết quả: file .wasm, .js (do emcc sinh ra) và web_assets
 
 CÀI ĐẶT EMSDK(dùng để biên dịch mã C++ thành ứng dụng web): https://emscripten.org/docs/getting_started/downloads.html#
-    Sau khi cài xong, mở cmd mới và gõ "emcc --version" xem biến môi trường đã hoạt động chưa
-    Nếu vẫn biến môi trường vẫn chưa hoạt động làm theo như sau:
+    Sau khi cài xong, mở cmd mới và gõ "emcc --version" xem biến môi trường đã hoạt động chưa.
+    Nếu biến môi trường vẫn chưa hoạt động làm theo như sau:
     
         1. Bấm phím Windows trên bàn phím, gõ tìm kiếm chữ Environment Variables và chọn mục Edit the system environment variables.
 
