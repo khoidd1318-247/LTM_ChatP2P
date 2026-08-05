@@ -37,7 +37,11 @@ CẤU TRÚC:
         │   └── webrtc_bridge.js    # Cầu nối JS (Thực thi các API WebRTC mà C++ không gọi trực tiếp được)
         └── build/                  # Nơi chứa kết quả: file .wasm, .js (do emcc sinh ra) và web_assets
 
+<<<<<<< HEAD
 CÀI ĐẶT EMSDK(dùng để biên dịch mã C++ thành ứng dụng web): https://emscripten.org/docs/getting_started/downloads.html# .
+=======
+CÀI ĐẶT EMSDK(dùng để biên dịch mã C++ thành ứng dụng web): https://emscripten.org/docs/getting_started/downloads.html#
+>>>>>>> 2bade5ad02cab1f6a930005abc35d68247052eec
     Sau khi cài xong, mở cmd mới và gõ "emcc --version" xem biến môi trường đã hoạt động chưa.
     Nếu biến môi trường vẫn chưa hoạt động làm theo như sau:
     
