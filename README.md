@@ -29,3 +29,11 @@ Repo:
     │
     ├── .gitignore               # File cấu hình danh sách các file/thư mục bỏ qua không đẩy lên Git
     └── README.md                # File tài liệu hướng dẫn tổng quan về dự án
+
+Câu lệnh build(trỏ tới folder tổng chứa tất cả file):
+* Cần cài đặt Trình biên dịch C++ (C++ Compiler): Sử dụng g++ (từ bộ MinGW-w64) hỗ trợ chuẩn C++17 trở lên để biên dịch mã nguồn mã hóa mạng và giao diện.
+    backend: g++ src/backend/main.cpp -I./include -lws2_32 -lmswsock -o build/server.exe
+    frontend: g++ g++ src/backend/main.cpp -I./include -lws2_32 -lmswsock -o build/server.exe
+Câu lệnh Run(trỏ tới folder build):
+    Run server(backend): server.exe
+    Run app(frontend): chat_app.exe
