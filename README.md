@@ -29,11 +29,11 @@ Repo:
     │
     ├── .gitignore               # File cấu hình danh sách các file/thư mục bỏ qua không đẩy lên Git
     └── README.md                # File tài liệu hướng dẫn tổng quan về dự án
-'''text
-Câu lệnh build(trỏ tới folder tổng chứa tất cả file):
-    backend: g++ src/backend/main.cpp -I./include -lws2_32 -lmswsock -o build/server.exe
-    frontend: g++ g++ src/backend/main.cpp -I./include -lws2_32 -lmswsock -o build/server.exe
-Câu lệnh Run(trỏ tới folder build):
-    Run server(backend): server.exe
-    Run app(frontend): chat_app.exe
-'''
+Câu lệnh: 
+
+    Câu lệnh build(trỏ tới folder tổng chứa tất cả file):
+        backend: g++ src/backend/main.cpp -I./include -lws2_32 -lmswsock -o build/server.exe
+        frontend: g++ g++ src/backend/main.cpp -I./include -lws2_32 -lmswsock -o build/server.exe
+    Câu lệnh Run(trỏ tới folder build):
+        Run server(backend): server.exe
+        Run app(frontend): chat_app.exe
