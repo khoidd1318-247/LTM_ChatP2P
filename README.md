@@ -1,4 +1,4 @@
-Repo:
+Repo:.
 
     p2pchat/
     │
