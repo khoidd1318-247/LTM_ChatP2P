@@ -1,5 +1,6 @@
 Repo: 
 fix 2
+
     p2pchat/
     │
     ├── .vscode/                 # Thư mục cấu hình của VS Code (tùy chọn)
