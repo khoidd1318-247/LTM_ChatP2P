@@ -13,36 +13,79 @@
 #include "imgui_impl_opengl3.h"
 #include <GLFW/glfw3.h>
 #include <iostream>
+#include <fstream>
 #include <string>
 #include <vector>
 #include <thread>
 #include <mutex>
+#include <ctime>
 
 using namespace std;
 
 typedef websocketpp::client<websocketpp::config::asio_client> ws_client_t;
 
-// Các biến toàn cục quản lý trạng thái
-ws_client_t* active_client = nullptr; // Dùng con trỏ để có thể cấp phát mới liên tục
+// State Variables
+ws_client_t* active_client = nullptr;
 websocketpp::connection_hdl ws_hdl;
 mutex chat_mutex; 
 vector<string> chatHistory;
 bool isConnected = false;
+
+char serverIP[128] = "127.0.0.1";
+char serverPort[32] = "8080";
 char username[128] = "";
 char roomID[128] = "";
 char messageBuf[1024] = "";
 
+// Helper: Get timestamp
+string get_timestamp() {
+    time_t now = time(0);
+    tm* ltm = localtime(&now);
+    char buf[32];
+    sprintf(buf, "[%02d:%02d:%02d]", ltm->tm_hour, ltm->tm_min, ltm->tm_sec);
+    return string(buf);
+}
+
+// Split string helper
+vector<string> split(const string& str, char delim) {
+    vector<string> tokens;
+    size_t start = 0, end = 0;
+    while ((end = str.find(delim, start)) != string::npos) {
+        tokens.push_back(str.substr(start, end - start));
+        start = end + 1;
+    }
+    tokens.push_back(str.substr(start));
+    return tokens;
+}
+
+// Save & Load History
+void save_history(const string& room, const string& msg) {
+    string filename = "chat_history_" + room + ".txt";
+    ofstream ofs(filename, ios::app);
+    if (ofs) ofs << msg << endl;
+}
+
+void load_history(const string& room) {
+    chatHistory.clear();
+    string filename = "chat_history_" + room + ".txt";
+    ifstream ifs(filename);
+    if (ifs) {
+        string line;
+        while (getline(ifs, line)) {
+            chatHistory.push_back(line);
+        }
+    }
+}
+
 int main() {
     if (!glfwInit()) return -1;
-    GLFWwindow* window = glfwCreateWindow(600, 700, "P2P Chat App", NULL, NULL);
+    GLFWwindow* window = glfwCreateWindow(650, 750, "LTM_ChatP2P - Client", NULL, NULL);
     if (!window) { glfwTerminate(); return -1; }
     glfwMakeContextCurrent(window);
     glfwSwapInterval(1);
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO(); (void)io;
-
-    // Tắt hoàn toàn việc tự động tạo file imgui.ini
     io.IniFilename = nullptr;
     
     ImGui::StyleColorsDark();
@@ -61,60 +104,91 @@ int main() {
         ImGui::Begin("MainWindow", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize);
 
         if (!isConnected) {
-            ImGui::Text("=== P2P CHAT APP ===");
+            ImGui::Text("=== LTM CHAT APP (CLIENT-SERVER) ===");
             ImGui::Spacing(); ImGui::Spacing();
+
+            ImGui::Text("Server IP:");
+            ImGui::InputText("##serverip", serverIP, IM_ARRAYSIZE(serverIP));
+            
+            ImGui::Text("Server Port:");
+            ImGui::InputText("##serverport", serverPort, IM_ARRAYSIZE(serverPort));
+            ImGui::Separator();
 
             ImGui::Text("Username:");
             ImGui::InputText("##username", username, IM_ARRAYSIZE(username));
             
             ImGui::Spacing();
             
-            ImGui::Text("RoomID (IP):");
+            ImGui::Text("RoomID:");
             ImGui::InputText("##roomid", roomID, IM_ARRAYSIZE(roomID));
             
             ImGui::Spacing(); ImGui::Spacing();
 
-            // KHI BẤM KẾT NỐI: Tạo một Client mạng hoàn toàn mới
             if (ImGui::Button("Connect", ImVec2(200, 40))) {
-                if (strlen(username) > 0 && strlen(roomID) > 0) {
+                if (strlen(username) > 0 && strlen(roomID) > 0 && strlen(serverIP) > 0) {
                     isConnected = true;
-                    chatHistory.clear();
-                    chatHistory.push_back("[System] Loading Sever...");
                     
-                    // Cấp phát động client mới để tránh bị kẹt trạng thái cũ
+                    // Load History
+                    load_history(string(roomID));
+                    
+                    lock_guard<mutex> lock(chat_mutex);
+                    chatHistory.push_back(get_timestamp() + " [System] Connecting to Server...");
+                    
                     active_client = new ws_client_t();
                     active_client->clear_access_channels(websocketpp::log::alevel::all);
                     active_client->init_asio();
 
-                    // Gắn sự kiện nhận tin
+                    // On Message
                     active_client->set_message_handler([](websocketpp::connection_hdl hdl, ws_client_t::message_ptr msg) {
                         lock_guard<mutex> lock(chat_mutex);
                         string incoming = msg->get_payload();
-                        string myRoomPrefix = "[" + string(roomID) + "] ";
-
-                        if (incoming.find(myRoomPrefix) == 0) {
-                            string cleanMsg = incoming.substr(myRoomPrefix.length());
-                            chatHistory.push_back(cleanMsg);
+                        vector<string> parts = split(incoming, '|');
+                        
+                        if (parts.size() >= 4) {
+                            string action = parts[0];
+                            string sender = parts[2];
+                            string content = parts[3];
+                            
+                            string displayMsg = get_timestamp() + " " + sender + ": " + content;
+                            
+                            if (action == "SYS") {
+                                displayMsg = get_timestamp() + " [System] " + content;
+                            } else if (action == "ERR") {
+                                displayMsg = get_timestamp() + " [ERROR] " + content;
+                            }
+                            
+                            chatHistory.push_back(displayMsg);
+                            save_history(string(roomID), displayMsg);
                         }
                     });
 
-                    // Gắn sự kiện mở kết nối
+                    // On Open
                     active_client->set_open_handler([](websocketpp::connection_hdl hdl) {
                         ws_hdl = hdl;
-                        lock_guard<mutex> lock(chat_mutex);
-                        chatHistory.push_back("[System] Connected to server 8080!");
+                        
+                        // Send JOIN packet
+                        string joinMsg = "JOIN|" + string(roomID) + "|" + string(username) + "|";
+                        websocketpp::lib::error_code ec;
+                        active_client->send(ws_hdl, joinMsg, websocketpp::frame::opcode::text, ec);
                     });
 
-                    // Gắn sự kiện đóng kết nối
+                    // On Close
                     active_client->set_close_handler([](websocketpp::connection_hdl hdl) {
                         lock_guard<mutex> lock(chat_mutex);
-                        chatHistory.push_back("[System] Disconnected!");
+                        chatHistory.push_back(get_timestamp() + " [System] Disconnected from Server.");
                     });
 
-                    // Chạy luồng mạng ngầm
+                    // On Fail
+                    active_client->set_fail_handler([](websocketpp::connection_hdl hdl) {
+                        lock_guard<mutex> lock(chat_mutex);
+                        chatHistory.push_back(get_timestamp() + " [System] Connection failed!");
+                    });
+
+                    // Connect (Thread)
                     thread([]() {
+                        string uri = "ws://" + string(serverIP) + ":" + string(serverPort) + "/signaling";
                         websocketpp::lib::error_code ec;
-                        ws_client_t::connection_ptr con = active_client->get_connection("ws://127.0.0.1:8080/signaling", ec);
+                        ws_client_t::connection_ptr con = active_client->get_connection(uri, ec);
                         if (!ec) {
                             active_client->connect(con);
                             active_client->run(); 
@@ -124,20 +198,18 @@ int main() {
             }
         } 
         else {
-            ImGui::Text("Welcome, %s! You're in RoomID: %s", username, roomID);
+            ImGui::Text("User: %s | Room: %s", username, roomID);
             ImGui::SameLine(ImGui::GetWindowWidth() - 100);
             
-            // KHI BẤM RỜI PHÒNG: Hủy hẳn client cũ đi để giải phóng tài nguyên mạng
             if (ImGui::Button("Leave")) {
                 isConnected = false;
                 if (active_client) {
                     websocketpp::lib::error_code ec;
                     active_client->close(ws_hdl, websocketpp::close::status::normal, "", ec);
                     active_client->stop();
-                    delete active_client; // Xóa sạch sẽ vùng nhớ cũ
+                    delete active_client; 
                     active_client = nullptr;
                 }
-                chatHistory.clear(); 
             }
             ImGui::Separator();
 
@@ -158,17 +230,19 @@ int main() {
             
             if (ImGui::Button("Send", ImVec2(60, 0)) || isEnterPressed) {
                 if (strlen(messageBuf) > 0) {
-                    string displayMessage = string(username) + ": " + messageBuf;
-                    string networkMessage = "[" + string(roomID) + "] " + displayMessage;
+                    string content = string(messageBuf);
+                    string displayMsg = get_timestamp() + " Me: " + content;
+                    string networkMsg = "MSG|" + string(roomID) + "|" + string(username) + "|" + content;
                     
                     {
                         lock_guard<mutex> lock(chat_mutex);
-                        chatHistory.push_back(displayMessage); 
+                        chatHistory.push_back(displayMsg); 
+                        save_history(string(roomID), displayMsg);
                     }
                     
                     if (active_client) {
                         websocketpp::lib::error_code ec;
-                        active_client->send(ws_hdl, networkMessage, websocketpp::frame::opcode::text, ec);
+                        active_client->send(ws_hdl, networkMsg, websocketpp::frame::opcode::text, ec);
                     }
 
                     messageBuf[0] = '\0';
@@ -188,7 +262,11 @@ int main() {
         glfwSwapBuffers(window);
     }
 
+    // Tắt phần mềm => Hủy dứt điểm socket
     if (active_client) {
+        websocketpp::lib::error_code ec;
+        active_client->close(ws_hdl, websocketpp::close::status::normal, "", ec);
+        active_client->stop();
         delete active_client;
     }
     ImGui_ImplOpenGL3_Shutdown();
