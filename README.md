@@ -21,9 +21,6 @@ Repo:
     │   └── libglfw3.a           # File thư viện tĩnh của GLFW dùng khi build client
     │
     ├── src/                     # Thư mục chứa mã nguồn chính tự viết của dự án
-    │   ├── backend/             # Mã nguồn phía máy chủ
-    │   │   └── main.cpp         # File mã nguồn chính của Signaling Server
-    │   │
     │   └── frontend/            # Mã nguồn phía giao diện người dùng
     │       └── main.cpp         # File mã nguồn chính của ứng dụng Chat Client
     │
