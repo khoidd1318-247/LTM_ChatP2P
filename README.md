@@ -32,8 +32,4 @@ Repo:
 Câu lệnh: 
 
     Câu lệnh build(trỏ tới folder tổng chứa tất cả file):
-        backend: g++ src/backend/main.cpp -I./include -lws2_32 -lmswsock -o build/server.exe
-        frontend: g++ src/frontend/main.cpp include/imgui/imgui.cpp include/imgui/imgui_draw.cpp include/imgui/imgui_tables.cpp include/imgui/imgui_widgets.cpp include/imgui/imgui_impl_glfw.cpp include/imgui/imgui_impl_opengl3.cpp -std=c++17 -I./include -I./include/imgui -L./lib -lglfw3 -lopengl32 -lgdi32 -lws2_32 -lmswsock -mwindows -o build/chat_app.exe
-    Câu lệnh Run(trỏ tới folder build):
-        Run server(backend): server.exe
-        Run app(frontend): chat_app.exe
+        frontend: g++ src/frontend/main.cpp include/imgui/imgui.cpp include/imgui/imgui_draw.cpp include/imgui/imgui_tables.cpp include/imgui/imgui_widgets.cpp include/imgui/imgui_impl_glfw.cpp include/imgui/imgui_impl_opengl3.cpp -std=c++17 -D_WIN32_WINNT=0x0601 -I./include -I./include/imgui -L./lib -lglfw3 -lopengl32 -lgdi32 -lws2_32 -lmswsock -mwindows -o build/chat_app.exe
