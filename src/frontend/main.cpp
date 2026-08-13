@@ -9,35 +9,209 @@
 #include <vector>
 #include <thread>
 #include <mutex>
+#include <sstream>
+#include <iomanip>
+#include <chrono>
+#include <ctime>
+#include <algorithm>
+#include <cstdlib>
+#include <cctype>
+#include <filesystem>
+#include <map>
 
 using namespace std;
 using asio::ip::tcp;
+namespace fs = std::filesystem;
+
+// --- DATA STRUCTURES & PROTOCOL ---
+struct ReactionItem {
+    string emoji;
+    string user_id;
+};
+
+struct ChatMessage {
+    string id;
+    string sender_name;
+    string sender_id;
+    string role;       // "Host" or "Peer"
+    string timestamp;
+    string reply_to_name;
+    string reply_to_text;
+    string content;
+    vector<ReactionItem> reactions;
+    bool is_delivered;
+    bool is_system;
+    bool is_self;
+};
+
+enum AppState { IDLE, WAITING_FOR_PEER, CONNECTED, DISCONNECTED_NOTICE };
 
 // --- GLOBAL VARIABLES & STATE ---
 mutex chat_mutex; 
-vector<string> chatHistory;
-char username[128] = ""; // Default username is now empty
+vector<ChatMessage> chatHistoryList;
+int messageCounter = 0;
+
+// Local & Peer Identification
+char username[128] = "";
+string local_user_id = "";
+string local_role = "Host";
+
+string peer_username = "";
+string peer_user_id = "";
+string peer_role = "";
+
+// Typing & State
+bool remote_is_typing = false;
+chrono::steady_clock::time_point last_remote_typing_time;
+chrono::steady_clock::time_point last_local_typing_sent;
+
+// UI State
+string replyTargetId = "";
+string replyTargetName = "";
+string replyTargetText = "";
+bool showInfoPanel = false;
+string statusErrorMessage = "";
+
+// Inputs
 char targetIP[128] = "127.0.0.1";
 char portBuf[16] = "8080";
 char messageBuf[1024] = "";
+char searchBuf[128] = "";
 
-enum AppState { IDLE, WAITING_FOR_PEER, CONNECTED };
 AppState currentState = IDLE;
 
-// Asio network objects
+// Asio Network Objects
 asio::io_context* io_context_ptr = nullptr;
 tcp::socket* peer_socket = nullptr;
 tcp::acceptor* peer_acceptor = nullptr;
 thread* network_thread = nullptr;
 asio::streambuf read_buffer;
 
-// Function to add messages to the UI
-void add_log(const string& msg) {
-    lock_guard<mutex> lock(chat_mutex);
-    chatHistory.push_back(msg);
+// --- DEBOUNCE CHAR CALLBACK (PREVENTS UNKEY / GLFW DUPLICATE CHARACTER INJECTION) ---
+static unsigned int g_LastChar = 0;
+static chrono::steady_clock::time_point g_LastCharTime;
+
+void CustomDebouncedCharCallback(GLFWwindow* window, unsigned int c) {
+    auto now = chrono::steady_clock::now();
+    auto elapsedMs = chrono::duration_cast<chrono::milliseconds>(now - g_LastCharTime).count();
+    if (c == g_LastChar && elapsedMs < 35) return;
+    g_LastChar = c;
+    g_LastCharTime = now;
+    ImGui_ImplGlfw_CharCallback(window, c);
 }
 
-// Function to clean up and disconnect
+// Function Prototypes
+void async_read_loop();
+void stop_network();
+void start_hosting(int port);
+void start_connecting(string ip, int port);
+void send_raw_line(const string& line);
+
+// Input Filter Callbacks
+static int PortInputFilter(ImGuiInputTextCallbackData* data) {
+    return (data->EventChar >= '0' && data->EventChar <= '9') ? 0 : 1;
+}
+
+static int IPInputFilter(ImGuiInputTextCallbackData* data) {
+    return ((data->EventChar >= '0' && data->EventChar <= '9') || data->EventChar == '.') ? 0 : 1;
+}
+
+// Helper: Formatted HH:MM:SS Time
+string get_current_time_str() {
+    auto now = chrono::system_clock::now();
+    auto in_time_t = chrono::system_clock::to_time_t(now);
+    tm buf;
+#if defined(_WIN32)
+    localtime_s(&buf, &in_time_t);
+#else
+    localtime_r(&in_time_t, &buf);
+#endif
+    ostringstream ss;
+    ss << setfill('0') << setw(2) << buf.tm_hour << ":" << setw(2) << buf.tm_min << ":" << setw(2) << buf.tm_sec;
+    return ss.str();
+}
+
+string generate_random_id() { return "#" + to_string(1000 + (rand() % 9000)); }
+
+string generate_msg_id() {
+    messageCounter++;
+    return local_user_id + "_" + to_string(messageCounter);
+}
+
+bool isValidIPv4(const string& ip) {
+    if (ip == "localhost" || ip == "127.0.0.1") return true;
+    stringstream ss(ip);
+    string segment;
+    vector<string> segments;
+    while (getline(ss, segment, '.')) segments.push_back(segment);
+    if (segments.size() != 4) return false;
+    for (const string& seg : segments) {
+        if (seg.empty() || seg.size() > 3) return false;
+        for (char c : seg) if (!isdigit(static_cast<unsigned char>(c))) return false;
+        int num = stoi(seg);
+        if (num < 0 || num > 255) return false;
+    }
+    return true;
+}
+
+bool isValidPort(const string& portStr, int& outPort) {
+    if (portStr.empty()) return false;
+    for (char c : portStr) if (!isdigit(static_cast<unsigned char>(c))) return false;
+    try {
+        int p = stoi(portStr);
+        if (p >= 1 && p <= 65535) { outPort = p; return true; }
+    } catch (...) {}
+    return false;
+}
+
+void add_system_log(const string& msg) {
+    lock_guard<mutex> lock(chat_mutex);
+    ChatMessage cm;
+    cm.id = generate_msg_id();
+    cm.sender_name = "System";
+    cm.timestamp = get_current_time_str();
+    cm.content = msg;
+    cm.is_system = true;
+    cm.is_delivered = true;
+    chatHistoryList.push_back(cm);
+}
+
+void add_chat_log(const string& msg_id, const string& sender_name, const string& sender_id, const string& role, const string& timestamp, const string& reply_name, const string& reply_text, const string& content, bool is_self) {
+    lock_guard<mutex> lock(chat_mutex);
+    ChatMessage cm;
+    cm.id = msg_id.empty() ? generate_msg_id() : msg_id;
+    cm.sender_name = sender_name;
+    cm.sender_id = sender_id;
+    cm.role = role;
+    cm.timestamp = timestamp.empty() ? get_current_time_str() : timestamp;
+    cm.reply_to_name = reply_name;
+    cm.reply_to_text = reply_text;
+    cm.content = content;
+    cm.is_system = false;
+    cm.is_self = is_self;
+    cm.is_delivered = !is_self;
+    chatHistoryList.push_back(cm);
+}
+
+void send_raw_line(const string& line) {
+    if (peer_socket && peer_socket->is_open()) {
+        asio::error_code ec;
+        string msg_with_newline = line + "\n";
+        asio::write(*peer_socket, asio::buffer(msg_with_newline), ec);
+    }
+}
+
+void send_handshake() {
+    string display_name = (strlen(username) > 0) ? string(username) : "Anonymous";
+    send_raw_line("[HANDSHAKE]|" + local_user_id + "|" + display_name + "|" + local_role);
+}
+
+void send_typing_status(bool is_typing) {
+    if (currentState == CONNECTED) {
+        send_raw_line("[TYPING]|" + string(is_typing ? "1" : "0"));
+    }
+}
+
 void stop_network() {
     if (io_context_ptr) io_context_ptr->stop();
     if (peer_socket) { asio::error_code ec; peer_socket->close(ec); delete peer_socket; peer_socket = nullptr; }
@@ -45,96 +219,344 @@ void stop_network() {
     if (network_thread && network_thread->joinable()) { network_thread->join(); delete network_thread; network_thread = nullptr; }
     if (io_context_ptr) { delete io_context_ptr; io_context_ptr = nullptr; }
     currentState = IDLE;
+    remote_is_typing = false;
+    replyTargetId = "";
 }
 
-// Asynchronous read loop for incoming messages
 void async_read_loop() {
+    if (!peer_socket || !peer_socket->is_open()) return;
+
     asio::async_read_until(*peer_socket, read_buffer, '\n', [](const asio::error_code& error, size_t bytes) {
         if (!error) {
             istream is(&read_buffer);
             string line;
             getline(is, line);
-            if (!line.empty()) add_log(line);
-            async_read_loop(); // Continue listening
+            if (!line.empty()) {
+                if (line.rfind("[HANDSHAKE]|", 0) == 0) {
+                    stringstream ss(line);
+                    string tag, remote_id, remote_name, remote_role;
+                    getline(ss, tag, '|'); getline(ss, remote_id, '|'); getline(ss, remote_name, '|'); getline(ss, remote_role, '|');
+                    peer_user_id = remote_id; peer_username = remote_name; peer_role = remote_role;
+                    add_system_log(remote_name + " (" + remote_id + " - " + remote_role + ") joined the chat session");
+                }
+                else if (line.rfind("[MSG]|", 0) == 0) {
+                    stringstream ss(line);
+                    string tag, msg_id, remote_id, remote_name, remote_role, ts, r_name, r_text, content;
+                    getline(ss, tag, '|'); getline(ss, msg_id, '|'); getline(ss, remote_id, '|'); getline(ss, remote_name, '|');
+                    getline(ss, remote_role, '|'); getline(ss, ts, '|'); getline(ss, r_name, '|'); getline(ss, r_text, '|'); getline(ss, content);
+                    add_chat_log(msg_id, remote_name, remote_id, remote_role, ts, r_name, r_text, content, false);
+                    send_raw_line("[ACK]|" + msg_id);
+                }
+                else if (line.rfind("[TYPING]|", 0) == 0) {
+                    stringstream ss(line); string tag, flag;
+                    getline(ss, tag, '|'); getline(ss, flag, '|');
+                    remote_is_typing = (flag == "1");
+                    last_remote_typing_time = chrono::steady_clock::now();
+                }
+                else if (line.rfind("[REACTION]|", 0) == 0) {
+                    stringstream ss(line); string tag, target_msg_id, emoji, reactor_id;
+                    getline(ss, tag, '|'); getline(ss, target_msg_id, '|'); getline(ss, emoji, '|'); getline(ss, reactor_id, '|');
+                    if (reactor_id.empty()) reactor_id = peer_user_id;
+
+                    lock_guard<mutex> lock(chat_mutex);
+                    for (auto& msg : chatHistoryList) {
+                        if (msg.id == target_msg_id) {
+                            auto it = find_if(msg.reactions.begin(), msg.reactions.end(), [&](const ReactionItem& item) {
+                                return item.emoji == emoji && item.user_id == reactor_id;
+                            });
+                            if (it != msg.reactions.end()) msg.reactions.erase(it);
+                            else msg.reactions.push_back({ emoji, reactor_id });
+                            break;
+                        }
+                    }
+                }
+                else if (line.rfind("[ACK]|", 0) == 0) {
+                    stringstream ss(line); string tag, ack_msg_id;
+                    getline(ss, tag, '|'); getline(ss, ack_msg_id, '|');
+                    lock_guard<mutex> lock(chat_mutex);
+                    for (auto& msg : chatHistoryList) {
+                        if (msg.id == ack_msg_id) { msg.is_delivered = true; break; }
+                    }
+                }
+                else if (line.rfind("[LEAVE]|", 0) == 0) {
+                    stringstream ss(line); string tag, remote_id, remote_name;
+                    getline(ss, tag, '|'); getline(ss, remote_id, '|'); getline(ss, remote_name, '|');
+                    add_system_log(remote_name + " (" + remote_id + ") left the chat session");
+                }
+                else {
+                    string remote_name = peer_username.empty() ? "Peer" : peer_username;
+                    add_chat_log("", remote_name, peer_user_id, peer_role, get_current_time_str(), "", "", line, false);
+                }
+            }
+            async_read_loop();
         } else {
-            add_log("[System] Connection lost.");
-            currentState = IDLE;
+            if (local_role == "Host") {
+                add_system_log("Peer disconnected. Host remains open waiting for new connections");
+                if (peer_socket) { asio::error_code ec; peer_socket->close(ec); }
+                currentState = WAITING_FOR_PEER;
+                remote_is_typing = false;
+                if (peer_acceptor && peer_acceptor->is_open()) {
+                    peer_acceptor->async_accept(*peer_socket, [](const asio::error_code& accept_ec) {
+                        if (!accept_ec) {
+                            add_system_log("Connected with a new Peer");
+                            currentState = CONNECTED;
+                            send_handshake();
+                            async_read_loop();
+                        }
+                    });
+                }
+            } else {
+                add_system_log("Connection lost to Host");
+                currentState = DISCONNECTED_NOTICE;
+                remote_is_typing = false;
+            }
         }
     });
 }
 
-// HOST MODE: Listen for incoming connections
 void start_hosting(int port) {
     stop_network();
-    chatHistory.clear();
+    chatHistoryList.clear();
+    statusErrorMessage = "";
+    local_role = "Host";
+
     try {
         io_context_ptr = new asio::io_context();
         peer_acceptor = new tcp::acceptor(*io_context_ptr, tcp::endpoint(tcp::v4(), port));
         peer_socket = new tcp::socket(*io_context_ptr);
-        
         currentState = WAITING_FOR_PEER;
-        add_log("[System] Opening Port " + to_string(port) + " waiting for peer...");
+        add_system_log("Listening on Port " + to_string(port) + ". Waiting for peer to connect...");
 
         peer_acceptor->async_accept(*peer_socket, [](const asio::error_code& error) {
             if (!error) {
-                add_log("[System] Peer connected! Start chatting.");
+                add_system_log("Connected successfully! Chat session started.");
                 currentState = CONNECTED;
+                send_handshake();
                 async_read_loop();
             } else {
-                add_log("[System] Host error: " + error.message());
+                add_system_log("Host error: " + error.message());
                 currentState = IDLE;
             }
         });
-
-        network_thread = new thread([]() { io_context_ptr->run(); });
+        network_thread = new thread([]() { try { io_context_ptr->run(); } catch (...) {} });
     } catch(exception& e) {
-        add_log(string("[System] Error: ") + e.what());
-        currentState = IDLE;
+        statusErrorMessage = string("Host creation error: ") + e.what();
+        stop_network();
     }
 }
 
-// JOIN MODE: Connect to a remote IP
 void start_connecting(string ip, int port) {
     stop_network();
-    chatHistory.clear();
+    chatHistoryList.clear();
+    statusErrorMessage = "";
+    local_role = "Peer";
+
     try {
         io_context_ptr = new asio::io_context();
         peer_socket = new tcp::socket(*io_context_ptr);
-        
         currentState = WAITING_FOR_PEER;
-        add_log("[System] Connecting to " + ip + ":" + to_string(port) + "...");
+        add_system_log("Connecting to " + ip + ":" + to_string(port) + "...");
 
         tcp::endpoint endpoint(asio::ip::make_address(ip), port);
-        peer_socket->async_connect(endpoint, [](const asio::error_code& error) {
+        peer_socket->async_connect(endpoint, [ip, port](const asio::error_code& error) {
             if (!error) {
-                add_log("[System] Connected successfully! Start chatting.");
+                add_system_log("Connected successfully to Host!");
                 currentState = CONNECTED;
+                send_handshake();
                 async_read_loop();
             } else {
-                add_log("[System] Connection failed: " + error.message());
+                if (error == asio::error::connection_refused) statusErrorMessage = "Room unavailable — Host is not ready or Port is incorrect";
+                else if (error == asio::error::timed_out) statusErrorMessage = "Connection timed out — Please check target IP address";
+                else statusErrorMessage = "Join failed: " + error.message();
+                add_system_log("Connection error: " + statusErrorMessage);
                 currentState = IDLE;
             }
         });
-
-        network_thread = new thread([]() { io_context_ptr->run(); });
+        network_thread = new thread([]() { try { io_context_ptr->run(); } catch (...) {} });
     } catch(exception& e) {
-        add_log(string("[System] Error: ") + e.what());
-        currentState = IDLE;
+        statusErrorMessage = string("Cannot connect to specified IP/Port: ") + e.what();
+        stop_network();
     }
 }
 
+void apply_modern_theme() {
+    ImGuiStyle& style = ImGui::GetStyle();
+    style.WindowRounding = 8.0f; style.ChildRounding = 8.0f; style.FrameRounding = 6.0f;
+    style.PopupRounding = 8.0f; style.ScrollbarRounding = 6.0f; style.GrabRounding = 6.0f;
+    style.WindowPadding = ImVec2(14, 14); style.FramePadding = ImVec2(10, 8); style.ItemSpacing = ImVec2(10, 10);
+    style.ButtonTextAlign = ImVec2(0.5f, 0.5f);
+
+    ImVec4* colors = style.Colors;
+    colors[ImGuiCol_Text]                  = ImVec4(0.95f, 0.96f, 0.98f, 1.00f);
+    colors[ImGuiCol_TextDisabled]          = ImVec4(0.50f, 0.55f, 0.60f, 1.00f);
+    colors[ImGuiCol_WindowBg]              = ImVec4(0.11f, 0.13f, 0.17f, 1.00f);
+    colors[ImGuiCol_ChildBg]               = ImVec4(0.15f, 0.17f, 0.22f, 1.00f);
+    colors[ImGuiCol_PopupBg]               = ImVec4(0.15f, 0.17f, 0.22f, 0.98f);
+    colors[ImGuiCol_Border]                = ImVec4(0.22f, 0.26f, 0.32f, 0.50f);
+    colors[ImGuiCol_FrameBg]               = ImVec4(0.18f, 0.21f, 0.27f, 1.00f);
+    colors[ImGuiCol_FrameBgHovered]        = ImVec4(0.24f, 0.28f, 0.35f, 1.00f);
+    colors[ImGuiCol_FrameBgActive]         = ImVec4(0.30f, 0.33f, 0.42f, 1.00f);
+    colors[ImGuiCol_TitleBg]               = ImVec4(0.11f, 0.13f, 0.17f, 1.00f);
+    colors[ImGuiCol_TitleBgActive]         = ImVec4(0.15f, 0.17f, 0.22f, 1.00f);
+    colors[ImGuiCol_CheckMark]             = ImVec4(0.38f, 0.52f, 0.98f, 1.00f);
+    colors[ImGuiCol_Button]                = ImVec4(0.32f, 0.44f, 0.92f, 1.00f);
+    colors[ImGuiCol_ButtonHovered]         = ImVec4(0.40f, 0.52f, 0.98f, 1.00f);
+    colors[ImGuiCol_ButtonActive]          = ImVec4(0.26f, 0.36f, 0.82f, 1.00f);
+    colors[ImGuiCol_Header]                = ImVec4(0.22f, 0.26f, 0.33f, 1.00f);
+    colors[ImGuiCol_HeaderHovered]         = ImVec4(0.28f, 0.33f, 0.42f, 1.00f);
+    colors[ImGuiCol_HeaderActive]          = ImVec4(0.34f, 0.40f, 0.50f, 1.00f);
+    colors[ImGuiCol_Separator]             = ImVec4(0.22f, 0.26f, 0.32f, 0.80f);
+}
+
+// --- MODULAR REUSABLE CHAT BUBBLE COMPONENT ---
+void render_chat_bubble(size_t idx, ChatMessage& msg) {
+    ImGui::Spacing();
+    string statusMark = msg.is_self ? (msg.is_delivered ? " ✓✓" : " ✓") : "";
+    string headerText = msg.is_self ? ("You " + msg.sender_id + " • " + msg.timestamp + statusMark) : (msg.sender_name + " " + msg.sender_id + " • " + msg.role + " • " + msg.timestamp);
+    
+    float maxBubbleWidth = max(340.0f, min(540.0f, ImGui::GetWindowWidth() * 0.75f));
+    ImVec2 textSize = ImGui::CalcTextSize(msg.content.c_str(), NULL, false, maxBubbleWidth - 24.0f);
+    float headerWidth = ImGui::CalcTextSize(headerText.c_str()).x;
+    float replyWidth = msg.reply_to_text.empty() ? 0.0f : ImGui::CalcTextSize(("Replying to " + msg.reply_to_name + ": " + msg.reply_to_text).c_str(), NULL, false, maxBubbleWidth - 24.0f).x;
+    float bubbleWidth = max(340.0f, min(maxBubbleWidth, max({ headerWidth, textSize.x, replyWidth }) + 30.0f));
+
+    if (msg.is_self) {
+        float posX = max(10.0f, ImGui::GetWindowWidth() - bubbleWidth - 25.0f);
+        ImGui::SetCursorPosX(posX);
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.25f, 0.38f, 0.85f, 0.95f)); // Accent Blue Bubble
+    } else {
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.18f, 0.21f, 0.27f, 0.95f)); // Slate Bubble
+    }
+
+    ImGui::BeginChild(msg.id.c_str(), ImVec2(bubbleWidth, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_NoScrollbar);
+    {
+        ImGui::TextColored(msg.is_self ? ImVec4(0.85f, 0.90f, 1.00f, 1.00f) : ImVec4(0.45f, 0.75f, 1.00f, 1.00f), "%s", headerText.c_str());
+        
+        if (!msg.reply_to_text.empty()) {
+            ImGui::TextColored(ImVec4(0.70f, 0.80f, 1.00f, 0.90f), "Replying to %s: \"%s\"", msg.reply_to_name.c_str(), msg.reply_to_text.c_str());
+            ImGui::Separator();
+        }
+        
+        ImGui::TextWrapped("%s", msg.content.c_str());
+
+        // Reaction Badges
+        map<string, pair<int, bool>> reactionCounts;
+        for (const auto& rItem : msg.reactions) {
+            auto& entry = reactionCounts[rItem.emoji];
+            entry.first++;
+            if (rItem.user_id == local_user_id) entry.second = true;
+        }
+
+        if (!reactionCounts.empty()) {
+            ImGui::Spacing();
+            ImGui::PushID(("reactions_" + msg.id).c_str());
+            int rIdx = 0;
+            for (auto& kv : reactionCounts) {
+                string emoji = kv.first;
+                int count = kv.second.first;
+                bool myReaction = kv.second.second;
+                if (rIdx > 0) ImGui::SameLine();
+
+                string badgeText = emoji + " " + to_string(count) + (myReaction ? " ✓" : "");
+
+                if (myReaction) {
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.45f, 0.95f, 1.00f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.25f, 0.55f, 1.00f, 1.00f));
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.00f, 1.00f, 1.00f, 1.00f));
+                } else {
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.22f, 0.30f, 0.85f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.26f, 0.32f, 0.42f, 1.00f));
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.85f, 0.90f, 0.95f, 1.00f));
+                }
+
+                if (ImGui::SmallButton(badgeText.c_str())) {
+                    send_raw_line("[REACTION]|" + msg.id + "|" + emoji + "|" + local_user_id);
+                    auto it = find_if(msg.reactions.begin(), msg.reactions.end(), [&](const ReactionItem& item) {
+                        return item.emoji == emoji && item.user_id == local_user_id;
+                    });
+                    if (it != msg.reactions.end()) msg.reactions.erase(it);
+                    else msg.reactions.push_back({ emoji, local_user_id });
+                }
+                ImGui::PopStyleColor(3);
+                rIdx++;
+            }
+            ImGui::PopID();
+        }
+
+        // Reaction Bar Buttons
+        ImGui::Spacing();
+        ImGui::PushID((int)idx);
+        if (!msg.is_self) {
+            if (ImGui::SmallButton("Reply")) {
+                replyTargetId = msg.id; replyTargetName = msg.sender_name; replyTargetText = msg.content.substr(0, 35);
+            }
+            ImGui::SameLine();
+        }
+
+        const char* quickIcons[] = { "😆", "🥰", "😮", "😡", "\xE2\x9D\xA4", "👍" };
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2, 2));
+        for (int k = 0; k < 6; k++) {
+            if (k > 0 || !msg.is_self) ImGui::SameLine();
+            string emoji = quickIcons[k];
+            bool isMyReacted = any_of(msg.reactions.begin(), msg.reactions.end(), [&](const ReactionItem& r) {
+                return r.emoji == emoji && r.user_id == local_user_id;
+            });
+
+            if (isMyReacted) {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.50f, 1.00f, 1.00f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.30f, 0.60f, 1.00f, 1.00f));
+            } else {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.26f, 0.40f, 0.60f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.30f, 0.40f, 0.60f, 1.00f));
+            }
+
+            if (ImGui::Button(quickIcons[k], ImVec2(32, 26))) {
+                send_raw_line("[REACTION]|" + msg.id + "|" + emoji + "|" + local_user_id);
+                auto it = find_if(msg.reactions.begin(), msg.reactions.end(), [&](const ReactionItem& item) {
+                    return item.emoji == emoji && item.user_id == local_user_id;
+                });
+                if (it != msg.reactions.end()) msg.reactions.erase(it);
+                else msg.reactions.push_back({ emoji, local_user_id });
+            }
+            ImGui::PopStyleColor(2);
+        }
+        ImGui::PopStyleVar();
+        ImGui::PopID();
+    }
+    ImGui::EndChild();
+    ImGui::PopStyleColor();
+}
+
 int main() {
+    srand(static_cast<unsigned int>(time(nullptr)));
+    local_user_id = generate_random_id();
+
     if (!glfwInit()) return -1;
-    GLFWwindow* window = glfwCreateWindow(600, 700, "P2P Chat App (True P2P)", NULL, NULL);
+    GLFWwindow* window = glfwCreateWindow(760, 860, "P2P Chat", NULL, NULL);
     if (!window) { glfwTerminate(); return -1; }
     glfwMakeContextCurrent(window);
     glfwSwapInterval(1);
+
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO(); (void)io;
     io.IniFilename = nullptr; 
-    ImGui::StyleColorsDark();
+
+    apply_modern_theme();
+
+    ImFontConfig font_config; font_config.OversampleH = 2; font_config.OversampleV = 2;
+    if (fs::exists("C:\\Windows\\Fonts\\segoeui.ttf")) io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeui.ttf", 17.0f, &font_config);
+    else if (fs::exists("C:\\Windows\\Fonts\\arial.ttf")) io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\arial.ttf", 17.0f, &font_config);
+    else io.Fonts->AddFontDefault();
+
+    static const ImWchar emoji_ranges[] = { 0x2000, 0x27BF, 0x1F300, 0x1F9FF, 0 };
+    if (fs::exists("C:\\Windows\\Fonts\\seguiemj.ttf")) {
+        ImFontConfig emoji_config; emoji_config.MergeMode = true; emoji_config.OversampleH = 1; emoji_config.OversampleV = 1;
+        io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\seguiemj.ttf", 15.0f, &emoji_config, emoji_ranges);
+    }
+
     ImGui_ImplGlfw_InitForOpenGL(window, true);
+    glfwSetCharCallback(window, CustomDebouncedCharCallback);
     ImGui_ImplOpenGL3_Init("#version 130");
 
     while (!glfwWindowShouldClose(window)) {
@@ -148,78 +570,191 @@ int main() {
         ImGui::SetNextWindowSize(viewport->WorkSize);
         ImGui::Begin("MainWindow", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize);
 
-        // UI for IDLE state (selecting host or join)
+        if (remote_is_typing) {
+            auto elapsed = chrono::duration_cast<chrono::seconds>(chrono::steady_clock::now() - last_remote_typing_time).count();
+            if (elapsed > 3) remote_is_typing = false;
+        }
+
+        // --- IDLE STATE ---
         if (currentState == IDLE) {
-            ImGui::Text("=== TRUE P2P CHAT APP ===");
-            ImGui::Spacing(); ImGui::Spacing();
+            ImGui::Spacing();
+            ImGui::TextColored(ImVec4(0.48f, 0.60f, 1.00f, 1.00f), "P2P Chat");
+            ImGui::TextColored(ImVec4(0.55f, 0.60f, 0.68f, 1.00f), "Direct Peer-to-Peer Messaging");
+            ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
 
-            ImGui::Text("UserName:");
+            if (!statusErrorMessage.empty()) {
+                ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.35f, 0.12f, 0.15f, 1.00f));
+                ImGui::BeginChild("ErrorBanner", ImVec2(0, 60), true);
+                ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.45f, 1.0f), "System Alert");
+                ImGui::TextWrapped("%s", statusErrorMessage.c_str());
+                ImGui::EndChild(); ImGui::PopStyleColor(); ImGui::Spacing();
+            }
+
+            ImGui::Text("Display Name");
             ImGui::InputText("##username", username, IM_ARRAYSIZE(username));
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(0.40f, 0.80f, 0.50f, 1.00f), "%s", local_user_id.c_str());
+            ImGui::TextColored(ImVec4(0.55f, 0.60f, 0.68f, 1.00f), "Unique session identifier for this peer");
+            ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
+
+            int parsedPort = 8080;
+            bool validPort = isValidPort(portBuf, parsedPort);
+            bool validIP = isValidIPv4(targetIP);
+
+            ImGui::TextColored(ImVec4(0.45f, 0.75f, 1.0f, 1.0f), "Option 1: Host Room");
+            ImGui::Text("Port (Digits 0-9 only)");
+            ImGui::InputText("##hostport", portBuf, IM_ARRAYSIZE(portBuf), ImGuiInputTextFlags_CallbackCharFilter, PortInputFilter);
             
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
+            if (!validPort) ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Invalid Port! Must be between 1 and 65535");
+            else ImGui::TextColored(ImVec4(0.4f, 0.85f, 0.5f, 1.0f), "Valid Port (%d)", parsedPort);
 
-            ImGui::Text("--- OPTION 1: HOST A ROOM ---");
-            ImGui::Text("Port:");
-            ImGui::InputText("##hostport", portBuf, IM_ARRAYSIZE(portBuf));
-            if (ImGui::Button("Host Room", ImVec2(200, 40))) {
-                start_hosting(atoi(portBuf));
-            }
+            ImGui::BeginDisabled(!validPort);
+            if (ImGui::Button("Host Room", ImVec2(200, 40))) start_hosting(parsedPort);
+            ImGui::EndDisabled();
 
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
+            ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
 
-            ImGui::Text("--- OPTION 2: JOIN A ROOM ---");
-            ImGui::Text("Peer IP Address:");
-            ImGui::InputText("##targetip", targetIP, IM_ARRAYSIZE(targetIP));
-            if (ImGui::Button("Join Room", ImVec2(200, 40))) {
-                start_connecting(targetIP, atoi(portBuf));
-            }
+            ImGui::TextColored(ImVec4(0.45f, 0.75f, 1.0f, 1.0f), "Option 2: Join Room");
+            ImGui::Text("Peer IP Address (Digits and '.' only)");
+            ImGui::InputText("##targetip", targetIP, IM_ARRAYSIZE(targetIP), ImGuiInputTextFlags_CallbackCharFilter, IPInputFilter);
+
+            if (!validIP) ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Invalid IP format (Standard format: x.x.x.x)");
+            else ImGui::TextColored(ImVec4(0.4f, 0.85f, 0.5f, 1.0f), "Valid IP format");
+
+            ImGui::BeginDisabled(!validPort || !validIP);
+            if (ImGui::Button("Join Room", ImVec2(200, 40))) start_connecting(targetIP, parsedPort);
+            ImGui::EndDisabled();
         } 
-        // UI for Connecting/Connected state
+        // --- CONNECTING / CONNECTED / DISCONNECTED ---
         else {
-            ImGui::Text("Hello, %s! (P2P Mode)", username);
-            ImGui::SameLine(ImGui::GetWindowWidth() - 170);
-            if (ImGui::Button("Disconnect / Cancel")) {
-                stop_network();
-            }
-            ImGui::Separator();
+            string my_name = (strlen(username) > 0) ? string(username) : "Anonymous";
 
-            ImGui::BeginChild("ChatRegion", ImVec2(0, -ImGui::GetFrameHeightWithSpacing() - 10), true);
+            ImGui::BeginChild("HeaderBar", ImVec2(0, 52), true);
+            {
+                if (currentState == CONNECTED) ImGui::TextColored(ImVec4(0.4f, 0.85f, 0.5f, 1.0f), "Connected");
+                else if (currentState == WAITING_FOR_PEER) ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f), "Waiting for Peer...");
+                else ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Disconnected");
+
+                ImGui::SameLine();
+                ImGui::Text(" |  You: %s %s • %s", my_name.c_str(), local_user_id.c_str(), local_role.c_str());
+
+                ImGui::SameLine(ImGui::GetWindowWidth() - 250);
+                if (ImGui::Button(showInfoPanel ? "Hide Info" : "Room Info", ImVec2(90, 30))) showInfoPanel = !showInfoPanel;
+
+                ImGui::SameLine();
+                if (ImGui::Button("Leave Room", ImVec2(130, 30))) {
+                    send_raw_line("[LEAVE]|" + local_user_id + "|" + my_name);
+                    stop_network();
+                }
+            }
+            ImGui::EndChild();
+
+            if (showInfoPanel) {
+                ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.14f, 0.16f, 0.21f, 1.00f));
+                ImGui::BeginChild("InfoPanel", ImVec2(0, 75), true);
+                {
+                    ImGui::TextColored(ImVec4(0.48f, 0.60f, 1.00f, 1.00f), "Room Details & Connection Status");
+                    ImGui::Text("Protocol: Direct TCP P2P Socket  |  Port: %s", portBuf);
+                    if (local_role == "Peer") ImGui::Text("Host Target IP: %s  |  Peer ID: %s", targetIP, peer_user_id.empty() ? "Connecting..." : peer_user_id.c_str());
+                    else ImGui::Text("Hosting Port: %s  |  Connected Peer: %s", portBuf, peer_username.empty() ? "None" : (peer_username + " " + peer_user_id).c_str());
+                }
+                ImGui::EndChild(); ImGui::PopStyleColor(); ImGui::Spacing();
+            }
+
+            ImGui::PushItemWidth(220);
+            ImGui::InputTextWithHint("##search", "Search messages...", searchBuf, IM_ARRAYSIZE(searchBuf));
+            ImGui::PopItemWidth(); ImGui::SameLine();
+            if (ImGui::Button("Clear History")) {
+                lock_guard<mutex> lock(chat_mutex);
+                chatHistoryList.clear();
+            }
+
+            float bottomPadding = (currentState == CONNECTED) ? 145.0f : 60.0f;
+            ImGui::BeginChild("ChatRegion", ImVec2(0, -bottomPadding), true);
             {
                 lock_guard<mutex> lock(chat_mutex);
-                for (const auto& msg : chatHistory) {
-                    ImGui::TextWrapped("%s", msg.c_str());
+                string filterStr = searchBuf;
+                transform(filterStr.begin(), filterStr.end(), filterStr.begin(), ::tolower);
+
+                for (size_t idx = 0; idx < chatHistoryList.size(); idx++) {
+                    auto& msg = chatHistoryList[idx];
+
+                    if (!filterStr.empty()) {
+                        string contentLower = msg.content;
+                        transform(contentLower.begin(), contentLower.end(), contentLower.begin(), ::tolower);
+                        if (contentLower.find(filterStr) == string::npos) continue;
+                    }
+
+                    if (msg.is_system) {
+                        ImGui::Spacing();
+                        ImGui::SetCursorPosX((ImGui::GetWindowWidth() - ImGui::CalcTextSize(msg.content.c_str()).x) * 0.5f);
+                        ImGui::TextColored(ImVec4(0.55f, 0.60f, 0.68f, 1.00f), "%s • %s", msg.timestamp.c_str(), msg.content.c_str());
+                        ImGui::Spacing();
+                    } else {
+                        render_chat_bubble(idx, msg);
+                    }
                 }
             }
             if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) ImGui::SetScrollHereY(1.0f);
             ImGui::EndChild();
 
             if (currentState == CONNECTED) {
+                if (remote_is_typing) {
+                    string typingName = peer_username.empty() ? "Peer" : peer_username;
+                    ImGui::TextColored(ImVec4(0.40f, 0.80f, 0.50f, 1.00f), "%s is typing...", typingName.c_str());
+                }
+
+                if (!replyTargetId.empty()) {
+                    ImGui::TextColored(ImVec4(0.45f, 0.75f, 1.00f, 1.00f), "Replying to %s: \"%s\"", replyTargetName.c_str(), replyTargetText.c_str());
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Cancel")) { replyTargetId = ""; replyTargetName = ""; replyTargetText = ""; }
+                }
+
+                ImGui::Text("Quick Replies:"); ImGui::SameLine();
+                const char* quickReplies[] = { "Hello!", "I'm on my way!", "Sounds good!", "Call you later", "Got it!", "Thanks!" };
+                for (int i = 0; i < 6; i++) {
+                    if (i > 0) ImGui::SameLine();
+                    if (ImGui::SmallButton(quickReplies[i])) strcpy_s(messageBuf, sizeof(messageBuf), quickReplies[i]);
+                }
+
+                ImGui::Text("Quick Emotes:"); ImGui::SameLine();
+                const char* emojis[] = { "😆", "🥰", "😮", "😡", "\xE2\x9D\xA4", "👍", "🔥" };
+                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2, 2));
+                for (int i = 0; i < 7; i++) {
+                    if (i > 0) ImGui::SameLine();
+                    if (ImGui::Button(emojis[i], ImVec2(32, 26))) strcat_s(messageBuf, sizeof(messageBuf), emojis[i]);
+                }
+                ImGui::PopStyleVar();
+
                 ImGui::PushItemWidth(-70);
-                bool isEnterPressed = ImGui::InputText("##InputBox", messageBuf, IM_ARRAYSIZE(messageBuf), ImGuiInputTextFlags_EnterReturnsTrue);
-                ImGui::PopItemWidth();
-                ImGui::SameLine();
+                bool isInputChanged = ImGui::InputText("##InputBox", messageBuf, IM_ARRAYSIZE(messageBuf), ImGuiInputTextFlags_EnterReturnsTrue);
                 
-                // Logic to send messages directly over Asio TCP Socket
-                if (ImGui::Button("Send", ImVec2(60, 0)) || isEnterPressed) {
-                    if (strlen(messageBuf) > 0) {
-                        string display_name = (strlen(username) > 0) ? string(username) : "Anonymous";
-                        string out_msg = display_name + ": " + messageBuf + "\n";
-                        asio::error_code ec;
-                        asio::write(*peer_socket, asio::buffer(out_msg), ec);
-                        
-                        if (!ec) {
-                            add_log(display_name + ": " + messageBuf);
-                            messageBuf[0] = '\0';
-                            ImGui::SetKeyboardFocusHere(-1); 
-                        } else {
-                            add_log("[System] Message send error: " + ec.message());
-                        }
+                if (ImGui::IsItemActive()) {
+                    auto now = chrono::steady_clock::now();
+                    if (chrono::duration_cast<chrono::milliseconds>(now - last_local_typing_sent).count() > 800) {
+                        send_typing_status(strlen(messageBuf) > 0);
+                        last_local_typing_sent = now;
                     }
                 }
+                ImGui::PopItemWidth(); ImGui::SameLine();
+
+                if (ImGui::Button("Send", ImVec2(60, 0)) || isInputChanged) {
+                    if (strlen(messageBuf) > 0) {
+                        string display_name = (strlen(username) > 0) ? string(username) : "Anonymous";
+                        string ts = get_current_time_str();
+                        string new_msg_id = generate_msg_id();
+                        string packet = "[MSG]|" + new_msg_id + "|" + local_user_id + "|" + display_name + "|" + local_role + "|" + ts + "|" + replyTargetName + "|" + replyTargetText + "|" + string(messageBuf);
+                        send_raw_line(packet);
+                        add_chat_log(new_msg_id, display_name, local_user_id, local_role, ts, replyTargetName, replyTargetText, string(messageBuf), true);
+
+                        messageBuf[0] = '\0'; replyTargetId = ""; replyTargetName = ""; replyTargetText = "";
+                        send_typing_status(false);
+                        ImGui::SetKeyboardFocusHere(-1);
+                    }
+                }
+            } else if (currentState == DISCONNECTED_NOTICE) {
+                ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Chat session ended or peer disconnected.");
+                if (ImGui::Button("Return to Main Screen", ImVec2(200, 36))) stop_network();
             }
         }
         ImGui::End();
@@ -228,18 +763,14 @@ int main() {
         int display_w, display_h;
         glfwGetFramebufferSize(window, &display_w, &display_h);
         glViewport(0, 0, display_w, display_h);
-        glClearColor(0.1f, 0.1f, 0.15f, 1.0f); 
+        glClearColor(0.11f, 0.13f, 0.17f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
         glfwSwapBuffers(window);
     }
 
     stop_network(); 
-    ImGui_ImplOpenGL3_Shutdown();
-    ImGui_ImplGlfw_Shutdown();
-    ImGui::DestroyContext();
-    glfwDestroyWindow(window);
-    glfwTerminate();
-
+    ImGui_ImplOpenGL3_Shutdown(); ImGui_ImplGlfw_Shutdown(); ImGui::DestroyContext();
+    glfwDestroyWindow(window); glfwTerminate();
     return 0;
 }
