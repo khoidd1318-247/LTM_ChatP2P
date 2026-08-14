@@ -75,6 +75,7 @@ string statusErrorMessage = "";
 // Inputs
 char targetIP[128] = "127.0.0.1";
 char portBuf[16] = "8080";
+char joinPortBuf[16] = "8080";
 char messageBuf[1024] = "";
 char searchBuf[128] = "";
 
@@ -117,6 +118,8 @@ static int PortInputFilter(ImGuiInputTextCallbackData *data) {
 
 static int IPInputFilter(ImGuiInputTextCallbackData *data) {
   return ((data->EventChar >= '0' && data->EventChar <= '9') ||
+          (data->EventChar >= 'a' && data->EventChar <= 'z') ||
+          (data->EventChar >= 'A' && data->EventChar <= 'Z') ||
           data->EventChar == '.')
              ? 0
              : 1;
@@ -228,7 +231,9 @@ void send_raw_line(const string &line) {
 
 void send_handshake() {
   string display_name = (strlen(username) > 0) ? string(username) : "Anonymous";
-  send_raw_line("[HANDSHAKE]|" + local_user_id + "|" + display_name + "|" +
+  string safe_name = display_name;
+  replace(safe_name.begin(), safe_name.end(), '|', '/');
+  send_raw_line("[HANDSHAKE]|" + local_user_id + "|" + safe_name + "|" +
                 local_role);
 }
 
@@ -441,6 +446,10 @@ void start_connecting(string ip, int port) {
   chatHistoryList.clear();
   statusErrorMessage = "";
   local_role = "Peer";
+
+  if (ip == "localhost") {
+      ip = "127.0.0.1";
+  }
 
   try {
     io_context_ptr = new asio::io_context();
@@ -829,16 +838,26 @@ int main() {
       ImGui::Text("Peer IP Address (Digits and '.' only)");
       ImGui::InputText("##targetip", targetIP, IM_ARRAYSIZE(targetIP),
                        ImGuiInputTextFlags_CallbackCharFilter, IPInputFilter);
+      
+      ImGui::Text("Target Port (Digits 0-9 only)");
+      ImGui::InputText("##joinport", joinPortBuf, IM_ARRAYSIZE(joinPortBuf),
+                       ImGuiInputTextFlags_CallbackCharFilter, PortInputFilter);
+
+      int parsedJoinPort = 8080;
+      bool validJoinPort = isValidPort(joinPortBuf, parsedJoinPort);
 
       if (!validIP)
         ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
                            "Invalid IP format (Standard format: x.x.x.x)");
+      else if (!validJoinPort)
+        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
+                           "Invalid Port! Must be between 1 and 65535");
       else
-        ImGui::TextColored(ImVec4(0.4f, 0.85f, 0.5f, 1.0f), "Valid IP format");
+        ImGui::TextColored(ImVec4(0.4f, 0.85f, 0.5f, 1.0f), "Valid IP & Port format");
 
-      ImGui::BeginDisabled(!validPort || !validIP);
+      ImGui::BeginDisabled(!validJoinPort || !validIP);
       if (ImGui::Button("Join Room", ImVec2(200, 40)))
-        start_connecting(targetIP, parsedPort);
+        start_connecting(targetIP, parsedJoinPort);
       ImGui::EndDisabled();
     }
     // --- CONNECTING / CONNECTED / DISCONNECTED ---
@@ -979,8 +998,11 @@ int main() {
         for (int i = 0; i < 5; i++) {
           if (i > 0)
             ImGui::SameLine();
-          if (ImGui::Button(emojis[i], ImVec2(32, 26)))
-            strcat_s(messageBuf, sizeof(messageBuf), emojis[i]);
+          if (ImGui::Button(emojis[i], ImVec2(32, 26))) {
+            if (strlen(messageBuf) + strlen(emojis[i]) < sizeof(messageBuf)) {
+              strcat_s(messageBuf, sizeof(messageBuf), emojis[i]);
+            }
+          }
         }
         ImGui::PopStyleVar();
 
@@ -1007,9 +1029,15 @@ int main() {
                 (strlen(username) > 0) ? string(username) : "Anonymous";
             string ts = get_current_time_str();
             string new_msg_id = generate_msg_id();
+            string safe_name = display_name;
+            replace(safe_name.begin(), safe_name.end(), '|', '/');
+            string safe_r_name = replyTargetName;
+            replace(safe_r_name.begin(), safe_r_name.end(), '|', '/');
+            string safe_r_text = replyTargetText;
+            replace(safe_r_text.begin(), safe_r_text.end(), '|', '/');
             string packet = "[MSG]|" + new_msg_id + "|" + local_user_id + "|" +
-                            display_name + "|" + local_role + "|" + ts + "|" +
-                            replyTargetName + "|" + replyTargetText + "|" +
+                            safe_name + "|" + local_role + "|" + ts + "|" +
+                            safe_r_name + "|" + safe_r_text + "|" +
                             string(messageBuf);
             send_raw_line(packet);
             add_chat_log(new_msg_id, display_name, local_user_id, local_role,
