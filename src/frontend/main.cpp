@@ -643,9 +643,9 @@ void render_chat_bubble(size_t idx, ChatMessage &msg) {
       ImGui::SameLine();
     }
 
-    const char *quickIcons[] = {"😆", "🥰", "😮", "😡", "\xE2\x9D\xA4", "👍"};
+    const char *quickIcons[] = {"❤️", "⭐", "✨", "✔", "✖"};
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2, 2));
-    for (int k = 0; k < 6; k++) {
+    for (int k = 0; k < 5; k++) {
       if (k > 0 || !msg.is_self)
         ImGui::SameLine();
       string emoji = quickIcons[k];
@@ -714,24 +714,31 @@ int main() {
   ImFontConfig font_config;
   font_config.OversampleH = 2;
   font_config.OversampleV = 2;
-  if (fs::exists("C:\\Windows\\Fonts\\segoeui.ttf"))
-    io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeui.ttf", 17.0f,
-                                 &font_config);
-  else if (fs::exists("C:\\Windows\\Fonts\\arial.ttf"))
-    io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\arial.ttf", 17.0f,
-                                 &font_config);
-  else
+  // We load the Segoe UI Emoji font directly as the main font since it contains both
+  // standard Latin/Vietnamese characters and all emoji glyphs. This bypasses the MergeMode / 16-bit wchar overflow issues.
+  // Load the default base font first (Segoe UI or Arial)
+  if (fs::exists("C:\\Windows\\Fonts\\segoeui.ttf")) {
+    io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeui.ttf", 17.0f, &font_config, io.Fonts->GetGlyphRangesVietnamese());
+  } else if (fs::exists("C:\\Windows\\Fonts\\arial.ttf")) {
+    io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\arial.ttf", 17.0f, &font_config, io.Fonts->GetGlyphRangesVietnamese());
+  } else {
     io.Fonts->AddFontDefault();
+  }
 
-  static const ImWchar emoji_ranges[] = {0x2000, 0x27BF, (ImWchar)0x1F300,
-                                         (ImWchar)0x1F9FF, 0};
+  // Merge the Windows Emoji Font (seguiemj.ttf) to support emojis (😆, 🥰, 😮, 😡, 👍, 🔥, etc.)
+  // Works with standard 16-bit ImWchar without modifying any external files.
   if (fs::exists("C:\\Windows\\Fonts\\seguiemj.ttf")) {
     ImFontConfig emoji_config;
     emoji_config.MergeMode = true;
     emoji_config.OversampleH = 1;
     emoji_config.OversampleV = 1;
-    io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\seguiemj.ttf", 15.0f,
-                                 &emoji_config, emoji_ranges);
+    
+    static const ImWchar emoji_ranges[] = {
+        0x2000, 0x3300,   // Symbols & Punctuation (❤️, etc.)
+        0x2600, 0x27FF,   // Miscellaneous Symbols & Dingbats
+        0xE000, 0xFFFD,   // Private Use Area & 16-bit truncated Emoji glyphs
+        0};
+    io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\seguiemj.ttf", 17.0f, &emoji_config, emoji_ranges);
   }
 
   ImGui_ImplGlfw_InitForOpenGL(window, true);
@@ -967,10 +974,9 @@ int main() {
 
         ImGui::Text("Quick Emotes:");
         ImGui::SameLine();
-        const char *emojis[] = {"😆",           "🥰", "😮", "😡",
-                                "\xE2\x9D\xA4", "👍", "🔥"};
+        const char *emojis[] = {"❤️", "⭐", "✨", "✔", "✖"};
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2, 2));
-        for (int i = 0; i < 7; i++) {
+        for (int i = 0; i < 5; i++) {
           if (i > 0)
             ImGui::SameLine();
           if (ImGui::Button(emojis[i], ImVec2(32, 26)))
