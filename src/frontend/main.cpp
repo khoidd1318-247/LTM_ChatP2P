@@ -42,6 +42,8 @@ struct ChatMessage {
   bool is_delivered;
   bool is_system;
   bool is_self;
+  bool is_deleted = false; // Tinh nang Delete Message (soft-delete)
+  bool is_edited = false;  // Tinh nang Edit Message
 };
 
 enum AppState { IDLE, WAITING_FOR_PEER, CONNECTED, DISCONNECTED_NOTICE };
@@ -72,11 +74,20 @@ string replyTargetText = "";
 bool showInfoPanel = false;
 string statusErrorMessage = "";
 
+// Edit Message State
+string editingMessageId = "";
+
+// Unread Messages State
+int unreadMessageCount = 0;
+size_t unreadTrackingIndex = 0;
+bool scrollToBottomRequested = false;
+
 // Inputs
 char targetIP[128] = "127.0.0.1";
 char portBuf[16] = "8080";
 char joinPortBuf[16] = "8080";
 char messageBuf[1024] = "";
+char editMessageBuf[1024] = "";
 char searchBuf[128] = "";
 
 AppState currentState = IDLE;
@@ -356,6 +367,37 @@ void async_read_loop() {
                   break;
                 }
               }
+            } else if (line.rfind("[EDIT]|", 0) == 0) {
+              // --- XỬ LÝ NHẬN GÓI [EDIT] TỪ PEER ---
+              stringstream ss(line);
+              string tag, edit_msg_id, new_content;
+              getline(ss, tag, '|');
+              getline(ss, edit_msg_id, '|');
+              // Lấy toàn bộ chuỗi còn lại (bao gồm cả ký tự '|') một cách an toàn
+              getline(ss, new_content); 
+
+              lock_guard<mutex> lock(chat_mutex);
+              for (auto &msg : chatHistoryList) {
+                if (msg.id == edit_msg_id) {
+                  msg.content = new_content;
+                  msg.is_edited = true;
+                  break;
+                }
+              }
+            } else if (line.rfind("[DELETE]|", 0) == 0) {
+              // --- XỬ LÝ NHẬN GÓI [DELETE] TỪ PEER ---
+              stringstream ss(line);
+              string tag, del_msg_id;
+              getline(ss, tag, '|');
+              getline(ss, del_msg_id); // hoặc getline(ss, del_msg_id, '|') cũng được
+
+              lock_guard<mutex> lock(chat_mutex);
+              for (auto &msg : chatHistoryList) {
+                if (msg.id == del_msg_id) {
+                  msg.is_deleted = true;
+                  break;
+                }
+              }
             } else if (line.rfind("[LEAVE]|", 0) == 0) {
               stringstream ss(line);
               string tag, remote_id, remote_name;
@@ -405,6 +447,9 @@ void async_read_loop() {
 void start_hosting(int port) {
   stop_network();
   chatHistoryList.clear();
+  unreadMessageCount = 0;
+  unreadTrackingIndex = 0;
+  editingMessageId = "";
   statusErrorMessage = "";
   local_role = "Host";
 
@@ -444,6 +489,9 @@ void start_hosting(int port) {
 void start_connecting(string ip, int port) {
   stop_network();
   chatHistoryList.clear();
+  unreadMessageCount = 0;
+  unreadTrackingIndex = 0;
+  editingMessageId = "";
   statusErrorMessage = "";
   local_role = "Peer";
 
@@ -530,19 +578,27 @@ void apply_modern_theme() {
 void render_chat_bubble(size_t idx, ChatMessage &msg) {
   ImGui::Spacing();
   string statusMark = msg.is_self ? (msg.is_delivered ? " ✓✓" : " ✓") : "";
+  string editedMark = (msg.is_edited && !msg.is_deleted) ? " (edited)" : "";
   string headerText =
       msg.is_self
-          ? ("You " + msg.sender_id + " • " + msg.timestamp + statusMark)
+          ? ("You " + msg.sender_id + " • " + msg.timestamp + editedMark +
+             statusMark)
           : (msg.sender_name + " " + msg.sender_id + " • " + msg.role + " • " +
-             msg.timestamp);
+             msg.timestamp + editedMark);
+
+  // Noi dung hien thi: tin nhan da xoa thi chi hien dong chu thong bao,
+  // khong dung noi dung that de tinh kich thuoc bubble.
+  string displayContent =
+      msg.is_deleted ? "This message was deleted." : msg.content;
+  bool showReplyPreview = !msg.is_deleted && !msg.reply_to_text.empty();
 
   float maxBubbleWidth =
       max(340.0f, min(540.0f, ImGui::GetWindowWidth() * 0.75f));
-  ImVec2 textSize = ImGui::CalcTextSize(msg.content.c_str(), NULL, false,
+  ImVec2 textSize = ImGui::CalcTextSize(displayContent.c_str(), NULL, false,
                                         maxBubbleWidth - 24.0f);
   float headerWidth = ImGui::CalcTextSize(headerText.c_str()).x;
   float replyWidth =
-      msg.reply_to_text.empty()
+      !showReplyPreview
           ? 0.0f
           : ImGui::CalcTextSize(
                 ("Replying to " + msg.reply_to_name + ": " + msg.reply_to_text)
@@ -573,55 +629,167 @@ void render_chat_bubble(size_t idx, ChatMessage &msg) {
                                    : ImVec4(0.45f, 0.75f, 1.00f, 1.00f),
                        "%s", headerText.c_str());
 
-    if (!msg.reply_to_text.empty()) {
-      ImGui::TextColored(ImVec4(0.70f, 0.80f, 1.00f, 0.90f),
-                         "Replying to %s: \"%s\"", msg.reply_to_name.c_str(),
-                         msg.reply_to_text.c_str());
-      ImGui::Separator();
-    }
+    if (msg.is_deleted) {
+      // Tin nhan da bi xoa: chi hien dong chu thong bao, an het cac hanh dong
+      ImGui::TextColored(ImVec4(0.55f, 0.60f, 0.68f, 1.00f),
+                         "This message was deleted.");
+    } else if (editingMessageId == msg.id) {
+      // Dang chinh sua tin nhan nay: hien o nhap lieu thay cho noi dung tinh
+      if (showReplyPreview) {
+        ImGui::TextColored(ImVec4(0.70f, 0.80f, 1.00f, 0.90f),
+                           "Replying to %s: \"%s\"", msg.reply_to_name.c_str(),
+                           msg.reply_to_text.c_str());
+        ImGui::Separator();
+      }
 
-    ImGui::TextWrapped("%s", msg.content.c_str());
+      ImGui::PushItemWidth(bubbleWidth - 24.0f);
+      bool editEnterPressed =
+          ImGui::InputText(("##edit_" + msg.id).c_str(), editMessageBuf,
+                           IM_ARRAYSIZE(editMessageBuf),
+                           ImGuiInputTextFlags_EnterReturnsTrue);
+      ImGui::PopItemWidth();
 
-    // Reaction Badges
-    map<string, pair<int, bool>> reactionCounts;
-    for (const auto &rItem : msg.reactions) {
-      auto &entry = reactionCounts[rItem.emoji];
-      entry.first++;
-      if (rItem.user_id == local_user_id)
-        entry.second = true;
-    }
+      ImGui::PushID((int)idx);
+      if (ImGui::SmallButton("Save") || editEnterPressed) {
+        if (strlen(editMessageBuf) > 0) {
+          msg.content = string(editMessageBuf);
+          msg.is_edited = true;
+          // --- GỬI GÓI [EDIT] QUA P2P ---
+          send_raw_line("[EDIT]|" + msg.id + "|" + msg.content);
+        }
+        editingMessageId = "";
+      }
+      ImGui::SameLine();
+      if (ImGui::SmallButton("Cancel")) {
+        editingMessageId = "";
+      }
+      ImGui::PopID();
+    } else {
+      if (showReplyPreview) {
+        ImGui::TextColored(ImVec4(0.70f, 0.80f, 1.00f, 0.90f),
+                           "Replying to %s: \"%s\"", msg.reply_to_name.c_str(),
+                           msg.reply_to_text.c_str());
+        ImGui::Separator();
+      }
 
-    if (!reactionCounts.empty()) {
+      ImGui::TextWrapped("%s", displayContent.c_str());
+
+      // Reaction Badges
+      map<string, pair<int, bool>> reactionCounts;
+      for (const auto &rItem : msg.reactions) {
+        auto &entry = reactionCounts[rItem.emoji];
+        entry.first++;
+        if (rItem.user_id == local_user_id)
+          entry.second = true;
+      }
+
+      if (!reactionCounts.empty()) {
+        ImGui::Spacing();
+        ImGui::PushID(("reactions_" + msg.id).c_str());
+        int rIdx = 0;
+        for (auto &kv : reactionCounts) {
+          string emoji = kv.first;
+          int count = kv.second.first;
+          bool myReaction = kv.second.second;
+          if (rIdx > 0)
+            ImGui::SameLine();
+
+          string badgeText =
+              emoji + " " + to_string(count) + (myReaction ? " ✓" : "");
+
+          if (myReaction) {
+            ImGui::PushStyleColor(ImGuiCol_Button,
+                                  ImVec4(0.15f, 0.45f, 0.95f, 1.00f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
+                                  ImVec4(0.25f, 0.55f, 1.00f, 1.00f));
+            ImGui::PushStyleColor(ImGuiCol_Text,
+                                  ImVec4(1.00f, 1.00f, 1.00f, 1.00f));
+          } else {
+            ImGui::PushStyleColor(ImGuiCol_Button,
+                                  ImVec4(0.18f, 0.22f, 0.30f, 0.85f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
+                                  ImVec4(0.26f, 0.32f, 0.42f, 1.00f));
+            ImGui::PushStyleColor(ImGuiCol_Text,
+                                  ImVec4(0.85f, 0.90f, 0.95f, 1.00f));
+          }
+
+          if (ImGui::SmallButton(badgeText.c_str())) {
+            send_raw_line("[REACTION]|" + msg.id + "|" + emoji + "|" +
+                          local_user_id);
+            auto it = find_if(msg.reactions.begin(), msg.reactions.end(),
+                              [&](const ReactionItem &item) {
+                                return item.emoji == emoji &&
+                                       item.user_id == local_user_id;
+                              });
+            if (it != msg.reactions.end())
+              msg.reactions.erase(it);
+            else
+              msg.reactions.push_back({emoji, local_user_id});
+          }
+          ImGui::PopStyleColor(3);
+          rIdx++;
+        }
+        ImGui::PopID();
+      }
+
+      // Reaction Bar Buttons
       ImGui::Spacing();
-      ImGui::PushID(("reactions_" + msg.id).c_str());
-      int rIdx = 0;
-      for (auto &kv : reactionCounts) {
-        string emoji = kv.first;
-        int count = kv.second.first;
-        bool myReaction = kv.second.second;
-        if (rIdx > 0)
+      ImGui::PushID((int)idx);
+      if (msg.is_self) {
+        // Chi tin nhan cua chinh minh moi co Edit / Delete
+        if (ImGui::SmallButton("Copy")) {
+          ImGui::SetClipboardText(msg.content.c_str());
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Edit")) {
+          editingMessageId = msg.id;
+          strcpy_s(editMessageBuf, sizeof(editMessageBuf), msg.content.c_str());
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Delete")) {
+          msg.is_deleted = true;
+          // --- GỬI GÓI [DELETE] QUA P2P ---
+          send_raw_line("[DELETE]|" + msg.id);
+        }
+        ImGui::SameLine();
+      } else {
+        if (ImGui::SmallButton("Reply")) {
+          replyTargetId = msg.id;
+          replyTargetName = msg.sender_name;
+          replyTargetText = msg.content.substr(0, 35);
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Copy")) {
+          ImGui::SetClipboardText(msg.content.c_str());
+        }
+        ImGui::SameLine();
+      }
+
+      const char *quickIcons[] = {"❤️", "⭐", "✨", "✔", "✖"};
+      ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2, 2));
+      for (int k = 0; k < 5; k++) {
+        if (k > 0)
           ImGui::SameLine();
+        string emoji = quickIcons[k];
+        bool isMyReacted =
+            any_of(msg.reactions.begin(), msg.reactions.end(),
+                   [&](const ReactionItem &r) {
+                     return r.emoji == emoji && r.user_id == local_user_id;
+                   });
 
-        string badgeText =
-            emoji + " " + to_string(count) + (myReaction ? " ✓" : "");
-
-        if (myReaction) {
+        if (isMyReacted) {
           ImGui::PushStyleColor(ImGuiCol_Button,
-                                ImVec4(0.15f, 0.45f, 0.95f, 1.00f));
+                                ImVec4(0.20f, 0.50f, 1.00f, 1.00f));
           ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
-                                ImVec4(0.25f, 0.55f, 1.00f, 1.00f));
-          ImGui::PushStyleColor(ImGuiCol_Text,
-                                ImVec4(1.00f, 1.00f, 1.00f, 1.00f));
+                                ImVec4(0.30f, 0.60f, 1.00f, 1.00f));
         } else {
           ImGui::PushStyleColor(ImGuiCol_Button,
-                                ImVec4(0.18f, 0.22f, 0.30f, 0.85f));
+                                ImVec4(0.20f, 0.26f, 0.40f, 0.60f));
           ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
-                                ImVec4(0.26f, 0.32f, 0.42f, 1.00f));
-          ImGui::PushStyleColor(ImGuiCol_Text,
-                                ImVec4(0.85f, 0.90f, 0.95f, 1.00f));
+                                ImVec4(0.30f, 0.40f, 0.60f, 1.00f));
         }
 
-        if (ImGui::SmallButton(badgeText.c_str())) {
+        if (ImGui::Button(quickIcons[k], ImVec2(32, 26))) {
           send_raw_line("[REACTION]|" + msg.id + "|" + emoji + "|" +
                         local_user_id);
           auto it = find_if(msg.reactions.begin(), msg.reactions.end(),
@@ -634,65 +802,11 @@ void render_chat_bubble(size_t idx, ChatMessage &msg) {
           else
             msg.reactions.push_back({emoji, local_user_id});
         }
-        ImGui::PopStyleColor(3);
-        rIdx++;
+        ImGui::PopStyleColor(2);
       }
+      ImGui::PopStyleVar();
       ImGui::PopID();
     }
-
-    // Reaction Bar Buttons
-    ImGui::Spacing();
-    ImGui::PushID((int)idx);
-    if (!msg.is_self) {
-      if (ImGui::SmallButton("Reply")) {
-        replyTargetId = msg.id;
-        replyTargetName = msg.sender_name;
-        replyTargetText = msg.content.substr(0, 35);
-      }
-      ImGui::SameLine();
-    }
-
-    const char *quickIcons[] = {"❤️", "⭐", "✨", "✔", "✖"};
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2, 2));
-    for (int k = 0; k < 5; k++) {
-      if (k > 0 || !msg.is_self)
-        ImGui::SameLine();
-      string emoji = quickIcons[k];
-      bool isMyReacted =
-          any_of(msg.reactions.begin(), msg.reactions.end(),
-                 [&](const ReactionItem &r) {
-                   return r.emoji == emoji && r.user_id == local_user_id;
-                 });
-
-      if (isMyReacted) {
-        ImGui::PushStyleColor(ImGuiCol_Button,
-                              ImVec4(0.20f, 0.50f, 1.00f, 1.00f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
-                              ImVec4(0.30f, 0.60f, 1.00f, 1.00f));
-      } else {
-        ImGui::PushStyleColor(ImGuiCol_Button,
-                              ImVec4(0.20f, 0.26f, 0.40f, 0.60f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
-                              ImVec4(0.30f, 0.40f, 0.60f, 1.00f));
-      }
-
-      if (ImGui::Button(quickIcons[k], ImVec2(32, 26))) {
-        send_raw_line("[REACTION]|" + msg.id + "|" + emoji + "|" +
-                      local_user_id);
-        auto it = find_if(msg.reactions.begin(), msg.reactions.end(),
-                          [&](const ReactionItem &item) {
-                            return item.emoji == emoji &&
-                                   item.user_id == local_user_id;
-                          });
-        if (it != msg.reactions.end())
-          msg.reactions.erase(it);
-        else
-          msg.reactions.push_back({emoji, local_user_id});
-      }
-      ImGui::PopStyleColor(2);
-    }
-    ImGui::PopStyleVar();
-    ImGui::PopID();
   }
   ImGui::EndChild();
   ImGui::PopStyleColor();
@@ -922,12 +1036,35 @@ int main() {
       if (ImGui::Button("Clear History")) {
         lock_guard<mutex> lock(chat_mutex);
         chatHistoryList.clear();
+        unreadMessageCount = 0;
+        unreadTrackingIndex = 0;
+        editingMessageId = "";
       }
 
       float bottomPadding = (currentState == CONNECTED) ? 145.0f : 60.0f;
       ImGui::BeginChild("ChatRegion", ImVec2(0, -bottomPadding), true);
       {
         lock_guard<mutex> lock(chat_mutex);
+
+        // Tinh nang Unread Messages: kiem tra vi tri cuon TRUOC khi tin nhan
+        // moi cua khung hinh nay duoc ve, de biet nguoi dung co dang o day
+        // khung chat hay khong.
+        bool wasAtBottom = ImGui::GetScrollY() >= ImGui::GetScrollMaxY();
+        if (chatHistoryList.size() > unreadTrackingIndex) {
+          for (size_t i = unreadTrackingIndex; i < chatHistoryList.size();
+               i++) {
+            const ChatMessage &incomingMsg = chatHistoryList[i];
+            // Chi tinh la "chua doc" neu la tin nhan cua peer (khong phai
+            // tin cua minh, khong phai log he thong) va nguoi dung dang
+            // khong o day khung chat.
+            if (!incomingMsg.is_self && !incomingMsg.is_system && !wasAtBottom)
+              unreadMessageCount++;
+          }
+          unreadTrackingIndex = chatHistoryList.size();
+        }
+        if (wasAtBottom)
+          unreadMessageCount = 0;
+
         string filterStr = searchBuf;
         transform(filterStr.begin(), filterStr.end(), filterStr.begin(),
                   ::tolower);
@@ -956,9 +1093,23 @@ int main() {
           }
         }
       }
-      if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY())
+      if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() ||
+          scrollToBottomRequested) {
         ImGui::SetScrollHereY(1.0f);
+        scrollToBottomRequested = false;
+        unreadMessageCount = 0;
+      }
       ImGui::EndChild();
+
+      if (unreadMessageCount > 0) {
+        string unreadLabel = to_string(unreadMessageCount) + " new message" +
+                             (unreadMessageCount > 1 ? "s" : "") + " ↓";
+        float labelWidth = ImGui::CalcTextSize(unreadLabel.c_str()).x + 30.0f;
+        ImGui::SetCursorPosX((ImGui::GetWindowWidth() - labelWidth) * 0.5f);
+        if (ImGui::Button(unreadLabel.c_str())) {
+          scrollToBottomRequested = true;
+        }
+      }
 
       if (currentState == CONNECTED) {
         if (remote_is_typing) {
