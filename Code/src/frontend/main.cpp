@@ -1162,7 +1162,35 @@ int main() {
           }
         }
         ImGui::PopStyleVar();
+// --- BỘ CHỌN EMOJI POPUP (CHUẨN 16-BIT UNICODE) ---
+        if (ImGui::Button("Emoji", ImVec2(54, 0))) {
+          ImGui::OpenPopup("EmojiPickerPopup");
+        }
 
+        if (ImGui::BeginPopup("EmojiPickerPopup")) {
+          ImGui::TextColored(ImVec4(0.45f, 0.75f, 1.00f, 1.0f), "Choose Emoji");
+          ImGui::Separator();
+          const char *palette[] = {
+              "❤️", "⭐", "✨", "⚡", "☀️", "☁️", "☔", "☕",
+              "✌️", "✋", "☝️", "✍️", "✉️", "✈️", "⌛", "⏰",
+              "⚓", "⚙️", "⚠️", "⛔", "❌", "❓", "❗", "🎵",
+              "⚽", "⚾", "⛄", "⛅", "✔", "✖", "✳", "❇"};
+          int totalEmojis = IM_ARRAYSIZE(palette);
+          int cols = 8;
+          for (int eIdx = 0; eIdx < totalEmojis; eIdx++) {
+            if (eIdx % cols != 0)
+              ImGui::SameLine();
+            ImGui::PushID(eIdx);
+            if (ImGui::Button(palette[eIdx], ImVec2(32, 28))) {
+              if (strlen(messageBuf) + strlen(palette[eIdx]) < sizeof(messageBuf)) {
+                strcat_s(messageBuf, sizeof(messageBuf), palette[eIdx]);
+              }
+            }
+            ImGui::PopID();
+          }
+          ImGui::EndPopup();
+        }
+        ImGui::SameLine();
         ImGui::PushItemWidth(-70);
         bool isInputChanged =
             ImGui::InputText("##InputBox", messageBuf, IM_ARRAYSIZE(messageBuf),
