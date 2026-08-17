@@ -759,6 +759,12 @@ void render_chat_bubble(size_t idx, ChatMessage &msg) {
           replyTargetText = msg.content.substr(0, 35);
         }
         ImGui::SameLine();
+        if (ImGui::SmallButton("Forward")) {
+          string forwardContent =
+              "[Forwarded from " + msg.sender_name + "]: " + msg.content;
+          strcpy_s(messageBuf, sizeof(messageBuf), forwardContent.c_str());
+        }
+        ImGui::SameLine();
         if (ImGui::SmallButton("Copy")) {
           ImGui::SetClipboardText(msg.content.c_str());
         }
