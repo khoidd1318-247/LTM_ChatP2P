@@ -99,6 +99,38 @@ tcp::acceptor *peer_acceptor = nullptr;
 thread *network_thread = nullptr;
 asio::streambuf read_buffer;
 
+
+// --- AVATAR HELPERS ---
+ImVec4 get_avatar_color(const string &str) {
+  unsigned int hash = 5381;
+  for (char c : str) {
+    hash = ((hash << 5) + hash) + static_cast<unsigned char>(c);
+  }
+  float r = 0.35f + ((hash & 0xFF) % 150) / 300.0f;
+  float g = 0.35f + (((hash >> 8) & 0xFF) % 150) / 300.0f;
+  float b = 0.35f + (((hash >> 16) & 0xFF) % 150) / 300.0f;
+  return ImVec4(r, g, b, 1.0f);
+}
+
+void render_avatar(const string &name, const string &id, float size = 32.0f) {
+  string initial = "?";
+  if (!name.empty() && name != "Anonymous") {
+    initial = (char)toupper(name[0]);
+  } else if (!id.empty()) {
+    initial = (char)toupper(id[1]);
+  }
+  ImVec4 col = get_avatar_color(name + id);
+  ImVec2 p = ImGui::GetCursorScreenPos();
+  ImDrawList *draw_list = ImGui::GetWindowDrawList();
+  ImVec2 center = ImVec2(p.x + size * 0.5f, p.y + size * 0.5f);
+  draw_list->AddCircleFilled(center, size * 0.5f, ImGui::ColorConvertFloat4ToU32(col));
+
+  ImVec2 text_sz = ImGui::CalcTextSize(initial.c_str());
+  ImVec2 text_pos = ImVec2(center.x - text_sz.x * 0.5f, center.y - text_sz.y * 0.5f);
+  draw_list->AddText(text_pos, IM_COL32(255, 255, 255, 255), initial.c_str());
+  ImGui::Dummy(ImVec2(size, size));
+}
+
 // --- DEBOUNCE CHAR CALLBACK (PREVENTS UNKEY / GLFW DUPLICATE CHARACTER
 // INJECTION) ---
 static unsigned int g_LastChar = 0;
@@ -984,8 +1016,11 @@ int main() {
     else {
       string my_name = (strlen(username) > 0) ? string(username) : "Anonymous";
 
-      ImGui::BeginChild("HeaderBar", ImVec2(0, 52), true);
+ImGui::BeginChild("HeaderBar", ImVec2(0, 56), true);
       {
+        render_avatar(my_name, local_user_id, 32.0f);
+        ImGui::SameLine();
+
         if (currentState == CONNECTED)
           ImGui::TextColored(ImVec4(0.4f, 0.85f, 0.5f, 1.0f), "Connected");
         else if (currentState == WAITING_FOR_PEER)
@@ -995,16 +1030,25 @@ int main() {
           ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Disconnected");
 
         ImGui::SameLine();
-        ImGui::Text(" |  You: %s %s • %s", my_name.c_str(),
+        ImGui::Text(" | You: %s %s • %s", my_name.c_str(),
                     local_user_id.c_str(), local_role.c_str());
 
-        ImGui::SameLine(ImGui::GetWindowWidth() - 250);
+        if (currentState == CONNECTED && !peer_username.empty()) {
+          ImGui::SameLine();
+          ImGui::Text(" | Peer:");
+          ImGui::SameLine();
+          render_avatar(peer_username, peer_user_id, 24.0f);
+          ImGui::SameLine();
+          ImGui::Text("%s %s", peer_username.c_str(), peer_user_id.c_str());
+        }
+
+        ImGui::SameLine(ImGui::GetWindowWidth() - 240);
         if (ImGui::Button(showInfoPanel ? "Hide Info" : "Room Info",
-                          ImVec2(90, 30)))
+                          ImVec2(85, 30)))
           showInfoPanel = !showInfoPanel;
 
         ImGui::SameLine();
-        if (ImGui::Button("Leave Room", ImVec2(130, 30))) {
+        if (ImGui::Button("Leave Room", ImVec2(120, 30))) {
           send_raw_line("[LEAVE]|" + local_user_id + "|" + my_name);
           stop_network();
         }
