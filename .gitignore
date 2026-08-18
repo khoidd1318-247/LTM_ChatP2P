@@ -1,0 +1,6 @@
+# Bỏ qua tất cả các file thực thi (phần mềm)
+*.exe
+
+# Bỏ qua thư mục build và toàn bộ nội dung bên trong
+build/
+Code/build/
