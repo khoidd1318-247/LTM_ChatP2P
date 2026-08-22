@@ -44,6 +44,8 @@ struct ChatMessage {
   bool is_self;
   bool is_deleted = false; // Tinh nang Delete Message (soft-delete)
   bool is_edited = false;  // Tinh nang Edit Message
+  bool is_read = false;    // Tinh nang Message Status (Issue 1): da xem chua
+  bool has_sent_read_receipt = false; // chong gui [READ] trung lap cho 1 message
 };
 
 enum AppState { IDLE, WAITING_FOR_PEER, CONNECTED, DISCONNECTED_NOTICE };
@@ -286,6 +288,24 @@ void send_typing_status(bool is_typing) {
   }
 }
 
+// Tinh nang Message Status (Issue 1): gui [READ] cho cac tin nhan cua peer
+// ma minh chua xac nhan da xem. Ham nay KHONG tu lock chat_mutex, gia dinh
+// noi goi da giu lock san (dung khi da o trong 1 lock_guard khac).
+void send_pending_read_receipts_nolock() {
+  for (auto &msg : chatHistoryList) {
+    if (!msg.is_self && !msg.is_system && !msg.has_sent_read_receipt) {
+      send_raw_line("[READ]|" + msg.id);
+      msg.has_sent_read_receipt = true;
+    }
+  }
+}
+
+// Ban tu lock chat_mutex, dung khi goi tu ngoai pham vi da lock san.
+void send_pending_read_receipts() {
+  lock_guard<mutex> lock(chat_mutex);
+  send_pending_read_receipts_nolock();
+}
+
 void stop_network() {
   if (io_context_ptr)
     io_context_ptr->stop();
@@ -396,6 +416,19 @@ void async_read_loop() {
               for (auto &msg : chatHistoryList) {
                 if (msg.id == ack_msg_id) {
                   msg.is_delivered = true;
+                  break;
+                }
+              }
+            } else if (line.rfind("[READ]|", 0) == 0) {
+              // --- XU LY NHAN GOI [READ] TU PEER (Message Status - Issue 1) ---
+              stringstream ss(line);
+              string tag, read_msg_id;
+              getline(ss, tag, '|');
+              getline(ss, read_msg_id, '|');
+              lock_guard<mutex> lock(chat_mutex);
+              for (auto &msg : chatHistoryList) {
+                if (msg.id == read_msg_id) {
+                  msg.is_read = true;
                   break;
                 }
               }
@@ -609,14 +642,31 @@ void apply_modern_theme() {
 // --- MODULAR REUSABLE CHAT BUBBLE COMPONENT ---
 void render_chat_bubble(size_t idx, ChatMessage &msg) {
   ImGui::Spacing();
-  string statusMark = msg.is_self ? (msg.is_delivered ? " ✓✓" : " ✓") : "";
   string editedMark = (msg.is_edited && !msg.is_deleted) ? " (edited)" : "";
   string headerText =
       msg.is_self
-          ? ("You " + msg.sender_id + " • " + msg.timestamp + editedMark +
-             statusMark)
+          ? ("You " + msg.sender_id + " • " + msg.timestamp + editedMark)
           : (msg.sender_name + " " + msg.sender_id + " • " + msg.role + " • " +
              msg.timestamp + editedMark);
+
+  // Tinh nang Message Status (Issue 1): [Da gui] / [Da nhan] / [Da xem].
+  // Chi ap dung cho tin nhan cua chinh minh (is_self == true); tin nhan
+  // cua peer khong hien thi trang thai nay. Uu tien hien thi trang thai cao
+  // nhat: is_read > is_delivered > mac dinh Da gui.
+  string statusLabel = "";
+  ImVec4 statusColor = ImVec4(0.65f, 0.68f, 0.72f, 1.00f); // mau xam (Da gui)
+  if (msg.is_self) {
+    if (msg.is_read) {
+      statusLabel = "[Đã xem]";
+      statusColor = ImVec4(0.40f, 0.80f, 0.45f, 1.00f); // mau xanh la
+    } else if (msg.is_delivered) {
+      statusLabel = "[Đã nhận]";
+      statusColor = ImVec4(0.40f, 0.65f, 1.00f, 1.00f); // mau xanh lam
+    } else {
+      statusLabel = "[Đã gửi]";
+      statusColor = ImVec4(0.65f, 0.68f, 0.72f, 1.00f); // mau xam
+    }
+  }
 
   // Noi dung hien thi: tin nhan da xoa thi chi hien dong chu thong bao,
   // khong dung noi dung that de tinh kich thuoc bubble.
@@ -629,6 +679,8 @@ void render_chat_bubble(size_t idx, ChatMessage &msg) {
   ImVec2 textSize = ImGui::CalcTextSize(displayContent.c_str(), NULL, false,
                                         maxBubbleWidth - 24.0f);
   float headerWidth = ImGui::CalcTextSize(headerText.c_str()).x;
+  if (!statusLabel.empty())
+    headerWidth += ImGui::CalcTextSize(statusLabel.c_str()).x + 6.0f;
   float replyWidth =
       !showReplyPreview
           ? 0.0f
@@ -660,6 +712,10 @@ void render_chat_bubble(size_t idx, ChatMessage &msg) {
     ImGui::TextColored(msg.is_self ? ImVec4(0.85f, 0.90f, 1.00f, 1.00f)
                                    : ImVec4(0.45f, 0.75f, 1.00f, 1.00f),
                        "%s", headerText.c_str());
+    if (!statusLabel.empty()) {
+      ImGui::SameLine(0.0f, 6.0f);
+      ImGui::TextColored(statusColor, "%s", statusLabel.c_str());
+    }
 
     if (msg.is_deleted) {
       // Tin nhan da bi xoa: chi hien dong chu thong bao, an het cac hanh dong
@@ -1112,8 +1168,12 @@ ImGui::BeginChild("HeaderBar", ImVec2(0, 56), true);
           }
           unreadTrackingIndex = chatHistoryList.size();
         }
-        if (wasAtBottom)
+        if (wasAtBottom) {
           unreadMessageCount = 0;
+          // Tinh nang Message Status (Issue 1): dang o cuoi khung chat nen
+          // coi nhu da xem het tin nhan cua peer hien co, gui [READ].
+          send_pending_read_receipts_nolock();
+        }
 
         string filterStr = searchBuf;
         transform(filterStr.begin(), filterStr.end(), filterStr.begin(),
@@ -1148,6 +1208,9 @@ ImGui::BeginChild("HeaderBar", ImVec2(0, 56), true);
         ImGui::SetScrollHereY(1.0f);
         scrollToBottomRequested = false;
         unreadMessageCount = 0;
+        // Tinh nang Message Status (Issue 1): vua cuon xuong cuoi / bam nut
+        // xem tin nhan moi -> gui [READ] cho cac tin nhan phu hop.
+        send_pending_read_receipts();
       }
       ImGui::EndChild();
 
