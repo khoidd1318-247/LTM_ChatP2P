@@ -657,6 +657,12 @@ void render_chat_bubble(size_t idx, ChatMessage &msg) {
                         ImGuiChildFlags_AlwaysUseWindowPadding,
                     ImGuiWindowFlags_NoScrollbar);
   {
+    if (ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows)) {
+      ImVec2 p_min = ImGui::GetWindowPos();
+      ImVec2 p_max = ImVec2(p_min.x + ImGui::GetWindowSize().x, p_min.y + ImGui::GetWindowSize().y);
+      ImGui::GetWindowDrawList()->AddRectFilled(p_min, p_max, IM_COL32(255, 255, 255, 20), 8.0f);
+    }
+
     ImGui::TextColored(msg.is_self ? ImVec4(0.85f, 0.90f, 1.00f, 1.00f)
                                    : ImVec4(0.45f, 0.75f, 1.00f, 1.00f),
                        "%s", headerText.c_str());
@@ -704,7 +710,13 @@ void render_chat_bubble(size_t idx, ChatMessage &msg) {
         ImGui::Separator();
       }
 
-      ImGui::TextWrapped("%s", displayContent.c_str());
+      ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0, 0, 0, 0));
+      ImGui::InputTextMultiline(("##msg_" + msg.id).c_str(), 
+                                (char*)displayContent.c_str(), 
+                                displayContent.size() + 1, 
+                                ImVec2(maxBubbleWidth - 24.0f, textSize.y + ImGui::GetStyle().FramePadding.y * 2), 
+                                ImGuiInputTextFlags_ReadOnly | ImGuiInputTextFlags_NoHorizontalScroll);
+      ImGui::PopStyleColor();
 
       // Reaction Badges
       map<string, pair<int, bool>> reactionCounts;
@@ -794,7 +806,7 @@ void render_chat_bubble(size_t idx, ChatMessage &msg) {
         if (ImGui::SmallButton("Forward")) {
           string forwardContent =
               "[Forwarded from " + msg.sender_name + "]: " + msg.content;
-          strcpy_s(messageBuf, sizeof(messageBuf), forwardContent.c_str());
+          snprintf(messageBuf, sizeof(messageBuf), "%s", forwardContent.c_str());
         }
         ImGui::SameLine();
         if (ImGui::SmallButton("Copy")) {
