@@ -767,12 +767,16 @@ void render_chat_bubble(size_t idx, ChatMessage &msg) {
       }
 
       ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0, 0, 0, 0));
+      ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(0, 0, 0, 0));
+      ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4(0, 0, 0, 0));
+      
       ImGui::InputTextMultiline(("##msg_" + msg.id).c_str(), 
                                 (char*)displayContent.c_str(), 
                                 displayContent.size() + 1, 
                                 ImVec2(maxBubbleWidth - 24.0f, textSize.y + ImGui::GetStyle().FramePadding.y * 2), 
-                                ImGuiInputTextFlags_ReadOnly | ImGuiInputTextFlags_NoHorizontalScroll);
-      ImGui::PopStyleColor();
+                                ImGuiInputTextFlags_ReadOnly | ImGuiInputTextFlags_NoHorizontalScroll | 1 << 24); // 1 << 24 is ImGuiInputTextFlags_WordWrap
+      
+      ImGui::PopStyleColor(3);
 
       // Reaction Badges
       map<string, pair<int, bool>> reactionCounts;
