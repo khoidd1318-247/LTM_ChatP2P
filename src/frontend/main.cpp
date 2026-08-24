@@ -919,9 +919,8 @@ void apply_modern_theme() {
 // ============================================================
 void render_chat_bubble(size_t idx, ChatMessage& msg) {
     ImGui::Spacing();
-    string statusMark = msg.is_self ? (msg.is_delivered ? " ✓✓" : " ✓") : "";
     string editedMark = (msg.is_edited && !msg.is_deleted) ? " (edited)" : "";
-    string headerText = msg.is_self ? ("You " + msg.sender_id + " • " + msg.timestamp + editedMark + statusMark) : (msg.sender_name + " " + msg.sender_id + " • " + msg.role + " • " + msg.timestamp + editedMark);
+    string headerText = msg.is_self ? ("You " + msg.sender_id + " • " + msg.timestamp + editedMark ) : (msg.sender_name + " " + msg.sender_id + " • " + msg.role + " • " + msg.timestamp + editedMark);
     string displayContent = msg.is_deleted ? "This message was deleted." : msg.content;
     bool showReplyPreview = !msg.is_deleted && !msg.reply_to_text.empty();
     float maxBubbleWidth = max(340.0f, min(540.0f, ImGui::GetWindowWidth() * 0.75f));
@@ -970,7 +969,17 @@ void render_chat_bubble(size_t idx, ChatMessage& msg) {
             ImGui::TextColored(ImVec4(0.70f, 0.80f, 1.00f, 0.90f), "Replying to %s: \"%s\"", msg.reply_to_name.c_str(), msg.reply_to_text.c_str());
             ImGui::Separator();
         }
-        ImGui::TextWrapped("%s", displayContent.c_str());
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0, 0, 0, 0));
+      ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(0, 0, 0, 0));
+      ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4(0, 0, 0, 0));
+      
+      ImGui::InputTextMultiline(("##msg_" + msg.id).c_str(), 
+                                (char*)displayContent.c_str(), 
+                                displayContent.size() + 1, 
+                                ImVec2(maxBubbleWidth - 24.0f, textSize.y + ImGui::GetStyle().FramePadding.y * 2), 
+                                ImGuiInputTextFlags_ReadOnly | ImGuiInputTextFlags_NoHorizontalScroll | 1 << 24); // 1 << 24 is ImGuiInputTextFlags_WordWrap
+      
+      ImGui::PopStyleColor(3);
         // REACTION COUNTS
         map<string, pair<int, bool>> reactionCounts;
         for (const auto& rItem : msg.reactions) {
@@ -1043,7 +1052,7 @@ void render_chat_bubble(size_t idx, ChatMessage& msg) {
             ImGui::SameLine();
             if (ImGui::SmallButton("Forward")) {
                 string forwardContent = "[Forwarded from " + msg.sender_name + "]: " + msg.content;
-                safe_copy(messageBuf, sizeof(messageBuf), forwardContent);
+                 snprintf(messageBuf, sizeof(messageBuf), "%s", forwardContent.c_str());
             }
             ImGui::SameLine();
             if (ImGui::SmallButton("Copy")) {
@@ -1434,7 +1443,9 @@ int main() {
                     }
                     unreadTrackingIndex = chatHistoryList.size();
                 }
-                if (wasAtBottom) unreadMessageCount = 0;
+                if (wasAtBottom){ unreadMessageCount = 0;
+                 send_pending_read_receipts_nolock();
+        }
                 string filterStr = searchBuf;
                 transform(filterStr.begin(), filterStr.end(), filterStr.begin(), [](unsigned char c) { return static_cast<char>(tolower(c)); });
                 for (size_t idx = 0; idx < chatHistoryList.size(); idx++) {
