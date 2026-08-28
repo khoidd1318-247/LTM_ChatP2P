@@ -4,6 +4,7 @@
 #include "imgui_impl_opengl3.h"
 #include <GLFW/glfw3.h>
 #include <algorithm>
+#include <atomic>
 #include <asio.hpp>
 #include <cctype>
 #include <chrono>
@@ -18,26 +19,11 @@
 #include <string>
 #include <thread>
 #include <vector>
-#include <atomic>
 
 using namespace std;
 using asio::ip::tcp;
-namespace fs = std::filesystem;
-
 using asio::ip::udp;
-static const unsigned short FRIEND_DISCOVERY_PORT = 9090;
-
-struct FoundFriend {
-    string id;
-    string name;
-    string ip;
-    int port;
-};
-
-mutex friend_mutex;
-vector<FoundFriend> foundFriends;
-atomic<bool> discovery_running(false);
-thread* discovery_thread = nullptr;
+namespace fs = std::filesystem;
 
 // --- DATA STRUCTURES & PROTOCOL ---
 struct ReactionItem {
@@ -108,6 +94,24 @@ char messageBuf[1024] = "";
 char editMessageBuf[1024] = "";
 char searchBuf[128] = "";
 
+// ============================================================
+// ONE-CLICK FRIEND DISCOVERY - ADDED ONLY
+// ============================================================
+struct OneClickFriend {
+    string id;
+    string name;
+    string ip;
+    int port;
+    chrono::steady_clock::time_point lastSeen;
+};
+
+static mutex oneClickFriendMutex;
+static vector<OneClickFriend> oneClickFriendList;
+static atomic<bool> oneClickDiscoveryRunning(false);
+static thread* oneClickDiscoveryThread = nullptr;
+static const int ONE_CLICK_DISCOVERY_PORT = 9090;
+static const char* ONE_CLICK_DISCOVERY_TAG = "P2P_FRIEND";
+
 AppState currentState = IDLE;
 
 // Asio Network Objects
@@ -172,9 +176,10 @@ void stop_network();
 void start_hosting(int port);
 void start_connecting(string ip, int port);
 void send_raw_line(const string& line);
-void start_friend_discovery_server(int port);
-void stop_friend_discovery();
-void find_friends();
+
+// One-click friend discovery - added only
+void start_one_click_discovery();
+void stop_one_click_discovery();
 
 // Input Filter Callbacks
 static int PortInputFilter(ImGuiInputTextCallbackData* data) {
@@ -325,108 +330,6 @@ void send_pending_read_receipts_nolock() {
 void send_pending_read_receipts() {
     lock_guard<mutex> lock(chat_mutex);
     send_pending_read_receipts_nolock();
-}
-
-// --- SIMPLE LAN FRIEND FINDER ---
-void start_friend_discovery_server(int port) {
-    stop_friend_discovery();
-    discovery_running = true;
-
-    discovery_thread = new thread([port]() {
-        try {
-            asio::io_context io;
-            udp::socket socket(io);
-            socket.open(udp::v4());
-            socket.set_option(asio::socket_base::reuse_address(true));
-            socket.bind(udp::endpoint(udp::v4(), FRIEND_DISCOVERY_PORT));
-            socket.non_blocking(true);
-
-            while (discovery_running) {
-                char data[256];
-                udp::endpoint sender;
-                asio::error_code ec;
-                size_t n = socket.receive_from(asio::buffer(data), sender, 0, ec);
-
-                if (!ec && n > 0 && string(data, n) == "[FIND_FRIEND]") {
-                    string name = (strlen(username) > 0) ? string(username) : "Anonymous";
-                    replace(name.begin(), name.end(), '|', '/');
-                    string reply = "[FRIEND]|" + local_user_id + "|" + name + "|" +
-                        to_string(port);
-                    socket.send_to(asio::buffer(reply), sender, 0, ec);
-                }
-                this_thread::sleep_for(chrono::milliseconds(50));
-            }
-        }
-        catch (...) {
-        }
-        });
-}
-
-void stop_friend_discovery() {
-    discovery_running = false;
-    if (discovery_thread && discovery_thread->joinable()) {
-        discovery_thread->join();
-        delete discovery_thread;
-        discovery_thread = nullptr;
-    }
-}
-
-void find_friends() {
-    {
-        lock_guard<mutex> lock(friend_mutex);
-        foundFriends.clear();
-    }
-
-    thread([]() {
-        try {
-            asio::io_context io;
-            udp::socket socket(io);
-            socket.open(udp::v4());
-            socket.set_option(asio::socket_base::broadcast(true));
-            socket.bind(udp::endpoint(udp::v4(), 0));
-            socket.non_blocking(true);
-
-            string request = "[FIND_FRIEND]";
-            udp::endpoint broadcast(asio::ip::address_v4::broadcast(),
-                FRIEND_DISCOVERY_PORT);
-            asio::error_code ec;
-            socket.send_to(asio::buffer(request), broadcast, 0, ec);
-
-            auto endTime = chrono::steady_clock::now() + chrono::milliseconds(1200);
-            while (chrono::steady_clock::now() < endTime) {
-                char data[256];
-                udp::endpoint sender;
-                size_t n = socket.receive_from(asio::buffer(data), sender, 0, ec);
-
-                if (!ec && n > 0) {
-                    stringstream ss(string(data, n));
-                    string tag, id, name, portText;
-                    getline(ss, tag, '|');
-                    getline(ss, id, '|');
-                    getline(ss, name, '|');
-                    getline(ss, portText, '|');
-
-                    int p = 0;
-                    try { p = stoi(portText); }
-                    catch (...) {}
-
-                    if (tag == "[FRIEND]" && !id.empty() && p > 0) {
-                        lock_guard<mutex> lock(friend_mutex);
-                        string ip = sender.address().to_string();
-                        bool exists = any_of(foundFriends.begin(), foundFriends.end(),
-                            [&](const FoundFriend& f) {
-                                return f.id == id && f.ip == ip;
-                            });
-                        if (!exists)
-                            foundFriends.push_back({ id, name, ip, p });
-                    }
-                }
-                this_thread::sleep_for(chrono::milliseconds(50));
-            }
-        }
-        catch (...) {
-        }
-        }).detach();
 }
 
 void stop_network() {
@@ -681,7 +584,6 @@ void start_hosting(int port) {
             catch (...) {
             }
             });
-        start_friend_discovery_server(port);
     }
     catch (exception& e) {
         statusErrorMessage = string("Host creation error: ") + e.what();
@@ -1071,6 +973,155 @@ void render_chat_bubble(size_t idx, ChatMessage& msg) {
     ImGui::PopStyleColor();
 }
 
+// ============================================================
+// ONE-CLICK FRIEND DISCOVERY - ADDED ONLY
+// ============================================================
+void start_one_click_discovery() {
+    if (oneClickDiscoveryRunning)
+        return;
+
+    oneClickDiscoveryRunning = true;
+    oneClickDiscoveryThread = new thread([]() {
+        try {
+            asio::io_context discoveryContext;
+            udp::socket discoverySocket(
+                discoveryContext,
+                udp::endpoint(udp::v4(), ONE_CLICK_DISCOVERY_PORT));
+
+            discoverySocket.set_option(asio::socket_base::broadcast(true));
+            discoverySocket.set_option(asio::socket_base::reuse_address(true));
+            discoverySocket.non_blocking(true);
+
+            udp::endpoint broadcastEndpoint(
+                asio::ip::address_v4::broadcast(),
+                ONE_CLICK_DISCOVERY_PORT);
+
+            auto lastSend = chrono::steady_clock::now();
+
+            while (oneClickDiscoveryRunning) {
+                auto now = chrono::steady_clock::now();
+
+                // Host tu dong phat ten + port ra LAN.
+                if (currentState == WAITING_FOR_PEER && local_role == "Host") {
+                    long elapsed = chrono::duration_cast<chrono::seconds>(now - lastSend).count();
+                    if (elapsed >= 1) {
+                        string friendName =
+                            strlen(username) > 0 ? string(username) : "Anonymous";
+
+                        int friendPort = atoi(portBuf);
+                        if (friendPort < 1 || friendPort > 65535)
+                            friendPort = 8080;
+
+                        string packet = string(ONE_CLICK_DISCOVERY_TAG) + "|" +
+                            local_user_id + "|" + friendName + "|" +
+                            to_string(friendPort);
+
+                        asio::error_code sendError;
+                        discoverySocket.send_to(
+                            asio::buffer(packet), broadcastEndpoint, 0, sendError);
+
+                        lastSend = now;
+                    }
+                }
+
+                // Nhan thong tin Host tu may khac.
+                char buffer[1024];
+                udp::endpoint senderEndpoint;
+                asio::error_code receiveError;
+
+                size_t received = discoverySocket.receive_from(
+                    asio::buffer(buffer), senderEndpoint, 0, receiveError);
+
+                if (!receiveError && received > 0) {
+                    buffer[min(received, sizeof(buffer) - 1)] = '\0';
+
+                    string tag, friendId, friendName, friendPortText;
+                    stringstream ss{ string(buffer) };
+                    getline(ss, tag, '|');
+                    getline(ss, friendId, '|');
+                    getline(ss, friendName, '|');
+                    getline(ss, friendPortText, '|');
+
+                    if (tag == ONE_CLICK_DISCOVERY_TAG &&
+                        !friendId.empty() && !friendName.empty() &&
+                        !friendPortText.empty() && friendId != local_user_id) {
+
+                        int friendPort = 8080;
+                        try {
+                            friendPort = stoi(friendPortText);
+                        }
+                        catch (...) {
+                            friendPort = 8080;
+                        }
+
+                        if (friendPort >= 1 && friendPort <= 65535) {
+                            string friendIP = senderEndpoint.address().to_string();
+                            lock_guard<mutex> lock(oneClickFriendMutex);
+
+                            bool found = false;
+                            for (auto& friendItem : oneClickFriendList) {
+                                if (friendItem.id == friendId) {
+                                    friendItem.name = friendName;
+                                    friendItem.ip = friendIP;
+                                    friendItem.port = friendPort;
+                                    friendItem.lastSeen = chrono::steady_clock::now();
+                                    found = true;
+                                    break;
+                                }
+                            }
+
+                            if (!found) {
+                                OneClickFriend newFriend;
+                                newFriend.id = friendId;
+                                newFriend.name = friendName;
+                                newFriend.ip = friendIP;
+                                newFriend.port = friendPort;
+                                newFriend.lastSeen = chrono::steady_clock::now();
+                                oneClickFriendList.push_back(newFriend);
+                            }
+                        }
+                    }
+                }
+
+                // Xoa Host khong con online.
+                {
+                    lock_guard<mutex> lock(oneClickFriendMutex);
+                    auto currentTime = chrono::steady_clock::now();
+                    oneClickFriendList.erase(
+                        remove_if(oneClickFriendList.begin(), oneClickFriendList.end(),
+                            [&](const OneClickFriend& item) {
+                                return chrono::duration_cast<chrono::seconds>(
+                                    currentTime - item.lastSeen).count() > 5;
+                            }),
+                        oneClickFriendList.end());
+                }
+
+                this_thread::sleep_for(chrono::milliseconds(50));
+            }
+
+            discoverySocket.close();
+        }
+        catch (...) {
+            // Discovery khong lam crash P2P Chat neu UDP khong khoi tao duoc.
+        }
+        });
+}
+
+void stop_one_click_discovery() {
+    oneClickDiscoveryRunning = false;
+
+    if (oneClickDiscoveryThread != nullptr) {
+        if (oneClickDiscoveryThread->joinable())
+            oneClickDiscoveryThread->join();
+
+        delete oneClickDiscoveryThread;
+        oneClickDiscoveryThread = nullptr;
+    }
+
+    lock_guard<mutex> lock(oneClickFriendMutex);
+    oneClickFriendList.clear();
+}
+
 int main() {
     srand(static_cast<unsigned int>(time(nullptr)));
     local_user_id = generate_random_id();
@@ -1129,6 +1180,9 @@ int main() {
     glfwSetCharCallback(window, CustomDebouncedCharCallback);
     ImGui_ImplOpenGL3_Init("#version 130");
 
+    // Start LAN discovery for one-click friend connection.
+    start_one_click_discovery();
+
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
         ImGui_ImplOpenGL3_NewFrame();
@@ -1178,32 +1232,6 @@ int main() {
                 local_user_id.c_str());
             ImGui::TextColored(ImVec4(0.55f, 0.60f, 0.68f, 1.00f),
                 "Unique session identifier for this peer");
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
-
-            // --- FIND FRIEND ---
-            ImGui::TextColored(ImVec4(0.45f, 0.75f, 1.0f, 1.0f),
-                "Find Friend on Local Network");
-            if (ImGui::Button("Find Friends", ImVec2(200, 36)))
-                find_friends();
-            ImGui::SameLine();
-            ImGui::Text("Searches friends on the same Wi-Fi/LAN");
-
-            {
-                lock_guard<mutex> lock(friend_mutex);
-                for (size_t i = 0; i < foundFriends.size(); ++i) {
-                    const auto& f = foundFriends[i];
-                    ImGui::PushID((int)i);
-                    ImGui::Text("%s %s  (%s:%d)", f.name.c_str(), f.id.c_str(),
-                        f.ip.c_str(), f.port);
-                    ImGui::SameLine();
-                    if (ImGui::SmallButton("Connect"))
-                        start_connecting(f.ip, f.port);
-                    ImGui::PopID();
-                }
-            }
-
             ImGui::Spacing();
             ImGui::Separator();
             ImGui::Spacing();
@@ -1260,6 +1288,69 @@ int main() {
             if (ImGui::Button("Join Room", ImVec2(200, 40)))
                 start_connecting(targetIP, parsedJoinPort);
             ImGui::EndDisabled();
+
+            // ============================================================
+            // ONE-CLICK FRIEND LIST - ADDED ONLY
+            // ============================================================
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            ImGui::TextColored(
+                ImVec4(0.45f, 0.75f, 1.00f, 1.00f),
+                "Contacts / Friends");
+
+            ImGui::TextColored(
+                ImVec4(0.55f, 0.60f, 0.68f, 1.00f),
+                "Click a friend name to connect instantly");
+
+            ImGui::Spacing();
+
+            ImGui::BeginChild("OneClickFriendList", ImVec2(0, 180), true);
+            {
+                lock_guard<mutex> lock(oneClickFriendMutex);
+
+                if (oneClickFriendList.empty()) {
+                    ImGui::TextColored(
+                        ImVec4(0.55f, 0.60f, 0.68f, 1.00f),
+                        "No friends / rooms found on LAN.");
+                }
+                else {
+                    for (size_t i = 0; i < oneClickFriendList.size(); ++i) {
+                        const OneClickFriend& friendItem = oneClickFriendList[i];
+
+                        ImGui::PushID(static_cast<int>(i));
+
+                        // Click vao TEN ban -> tu dong connect bang IP/Port da tim thay.
+                        if (ImGui::Selectable(
+                            friendItem.name.c_str(), false, 0, ImVec2(0, 34))) {
+
+                            string connectIP = friendItem.ip;
+                            int connectPort = friendItem.port;
+
+                            ImGui::PopID();
+                            ImGui::EndChild();
+
+                            start_connecting(connectIP, connectPort);
+                            goto OneClickFriendListDone;
+                        }
+
+                        ImGui::SameLine();
+                        ImGui::TextColored(
+                            ImVec4(0.55f, 0.60f, 0.68f, 1.00f),
+                            "Host  %s:%d",
+                            friendItem.ip.c_str(),
+                            friendItem.port);
+
+                        ImGui::Separator();
+                        ImGui::PopID();
+                    }
+                }
+            }
+            ImGui::EndChild();
+
+        OneClickFriendListDone:
+            ImGui::Spacing();
         }
         // --- CONNECTING / CONNECTED / DISCONNECTED ---
         else {
@@ -1558,6 +1649,7 @@ int main() {
         glfwSwapBuffers(window);
     }
 
+    stop_one_click_discovery();
     stop_network();
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
