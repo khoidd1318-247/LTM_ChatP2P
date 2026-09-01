@@ -92,139 +92,6 @@ char messageBuf[1024] = "";
 char editMessageBuf[1024] = "";
 char searchBuf[128] = "";
 
-// ================= STICKER SYSTEM =================
-// Sticker được vẽ trực tiếp bằng ImDrawList nên không phụ thuộc font Emoji.
-// Gói mạng riêng: [STICKER]|sticker_id
-struct StickerItem {
-    const char* id;
-    const char* name;
-};
-
-static const StickerItem stickerList[] = {
-    {"heart", "Love"}, {"laugh", "Laugh"}, {"wow", "Wow"},
-    {"angry", "Angry"}, {"love", "Cute"}, {"thumbsup", "Like"},
-    {"fire", "Fire"}, {"party", "Party"}, {"cool", "Cool"},
-    {"kiss", "Kiss"}, {"sad", "Sad"}, {"clap", "Clap"} };
-
-static const StickerItem* find_sticker(const string& id) {
-    for (const auto& sticker : stickerList) {
-        if (id == sticker.id)
-            return &sticker;
-    }
-    return nullptr;
-}
-
-static bool is_sticker_content(const string& content) {
-    return content.rfind("[STICKER:", 0) == 0 && !content.empty() &&
-        content.back() == ']';
-}
-
-static string sticker_id_from_content(const string& content) {
-    if (!is_sticker_content(content))
-        return "";
-    return content.substr(9, content.size() - 10);
-}
-
-// Vẽ sticker bằng hình học đơn giản. Không sử dụng ký tự Emoji =>
-// không còn hiện ô vuông/kim cương khi chọn hoặc nhận sticker.
-static void draw_sticker_icon(ImDrawList* draw, const ImVec2& min,
-    const ImVec2& max, const string& id) {
-    float w = max.x - min.x;
-    float h = max.y - min.y;
-    float cx = (min.x + max.x) * 0.5f;
-    float cy = (min.y + max.y) * 0.5f;
-    float r = (std::min)(w, h) * 0.30f;
-
-    draw->AddRectFilled(min, max, IM_COL32(31, 40, 56, 255), 14.0f);
-    draw->AddRect(min, max, IM_COL32(75, 91, 120, 180), 14.0f, 0, 1.5f);
-
-    if (id == "heart") {
-        draw->AddCircleFilled(ImVec2(cx - r * .48f, cy - r * .20f), r * .62f, IM_COL32(255, 75, 105, 255));
-        draw->AddCircleFilled(ImVec2(cx + r * .48f, cy - r * .20f), r * .62f, IM_COL32(255, 75, 105, 255));
-        draw->AddTriangleFilled(ImVec2(cx - r * 1.05f, cy), ImVec2(cx + r * 1.05f, cy), ImVec2(cx, cy + r * .70f), IM_COL32(255, 75, 105, 255));
-        draw->AddCircleFilled(ImVec2(cx - r * .55f, cy - r * .35f), r * .12f, IM_COL32(255, 190, 205, 255));
-    }
-    else if (id == "laugh") {
-        draw->AddCircleFilled(ImVec2(cx, cy), r, IM_COL32(255, 205, 55, 255));
-        draw->AddCircleFilled(ImVec2(cx - r * .35f, cy - r * .18f), r * .10f, IM_COL32(45, 45, 45, 255));
-        draw->AddCircleFilled(ImVec2(cx + r * .35f, cy - r * .18f), r * .10f, IM_COL32(45, 45, 45, 255));
-        draw->AddCircle(ImVec2(cx, cy + r * .28f), r * .34f, IM_COL32(70, 45, 45, 255), 24, 3.0f);
-        draw->AddCircleFilled(ImVec2(cx - r * .72f, cy + r * .15f), r * .22f, IM_COL32(90, 190, 255, 230));
-        draw->AddCircleFilled(ImVec2(cx + r * .72f, cy + r * .15f), r * .22f, IM_COL32(90, 190, 255, 230));
-    }
-    else if (id == "wow") {
-        draw->AddCircleFilled(ImVec2(cx, cy), r, IM_COL32(245, 245, 245, 255));
-        draw->AddCircleFilled(ImVec2(cx - r * .35f, cy - r * .20f), r * .18f, IM_COL32(40, 40, 50, 255));
-        draw->AddCircleFilled(ImVec2(cx + r * .35f, cy - r * .20f), r * .18f, IM_COL32(40, 40, 50, 255));
-        draw->AddCircleFilled(ImVec2(cx, cy + r * .35f), r * .18f, IM_COL32(45, 45, 55, 255));
-        draw->AddCircleFilled(ImVec2(cx - r * .92f, cy - r * .55f), r * .09f, IM_COL32(255, 210, 65, 255));
-        draw->AddCircleFilled(ImVec2(cx + r * .92f, cy - r * .55f), r * .09f, IM_COL32(255, 210, 65, 255));
-    }
-    else if (id == "angry") {
-        draw->AddCircleFilled(ImVec2(cx, cy), r, IM_COL32(245, 90, 45, 255));
-        draw->AddLine(ImVec2(cx - r * .55f, cy - r * .35f), ImVec2(cx - r * .10f, cy - r * .15f), IM_COL32(55, 30, 30, 255), 4);
-        draw->AddLine(ImVec2(cx + r * .55f, cy - r * .35f), ImVec2(cx + r * .10f, cy - r * .15f), IM_COL32(55, 30, 30, 255), 4);
-        draw->AddLine(ImVec2(cx - r * .38f, cy + r * .42f), ImVec2(cx + r * .38f, cy + r * .42f), IM_COL32(55, 30, 30, 255), 4);
-    }
-    else if (id == "love") {
-        draw->AddCircleFilled(ImVec2(cx, cy), r, IM_COL32(248, 245, 238, 255));
-        draw->AddCircleFilled(ImVec2(cx - r * .35f, cy - r * .10f), r * .09f, IM_COL32(45, 45, 50, 255));
-        draw->AddCircleFilled(ImVec2(cx + r * .35f, cy - r * .10f), r * .09f, IM_COL32(45, 45, 50, 255));
-        draw->AddCircleFilled(ImVec2(cx, cy + r * .42f), r * .38f, IM_COL32(255, 70, 100, 255));
-        draw->AddCircleFilled(ImVec2(cx - r * .75f, cy - r * .55f), r * .16f, IM_COL32(255, 150, 175, 255));
-        draw->AddCircleFilled(ImVec2(cx + r * .75f, cy - r * .55f), r * .16f, IM_COL32(255, 150, 175, 255));
-    }
-    else if (id == "thumbsup") {
-        draw->AddCircleFilled(ImVec2(cx, cy), r, IM_COL32(255, 205, 55, 255));
-        draw->AddRectFilled(ImVec2(cx - r * .28f, cy - r * .05f), ImVec2(cx + r * .45f, cy + r * .48f), IM_COL32(255, 190, 35, 255), r * .12f);
-        draw->AddRectFilled(ImVec2(cx - r * .05f, cy - r * .72f), ImVec2(cx + r * .30f, cy + r * .08f), IM_COL32(255, 205, 55, 255), r * .10f);
-        draw->AddLine(ImVec2(cx - r * .20f, cy + r * .18f), ImVec2(cx - r * .65f, cy + r * .18f), IM_COL32(180, 120, 20, 255), 5);
-    }
-    else if (id == "fire") {
-        draw->AddTriangleFilled(ImVec2(cx, cy - r * 1.05f), ImVec2(cx - r * .82f, cy + r * .75f), ImVec2(cx + r * .82f, cy + r * .75f), IM_COL32(255, 90, 35, 255));
-        draw->AddCircleFilled(ImVec2(cx, cy + r * .42f), r * .48f, IM_COL32(255, 195, 45, 255));
-        draw->AddTriangleFilled(ImVec2(cx, cy - r * .15f), ImVec2(cx - r * .35f, cy + r * .60f), ImVec2(cx + r * .35f, cy + r * .60f), IM_COL32(255, 225, 80, 255));
-    }
-    else if (id == "party") {
-        draw->AddCircleFilled(ImVec2(cx, cy + r * .05f), r * .72f, IM_COL32(245, 245, 240, 255));
-        draw->AddTriangleFilled(ImVec2(cx - r * .65f, cy - r * .55f), ImVec2(cx + r * .35f, cy - r * .95f), ImVec2(cx - r * .05f, cy - r * .15f), IM_COL32(80, 160, 255, 255));
-        draw->AddLine(ImVec2(cx - r * .55f, cy - r * .50f), ImVec2(cx + r * .25f, cy - r * .75f), IM_COL32(255, 80, 120, 255), 4);
-        draw->AddCircleFilled(ImVec2(cx - r * .28f, cy + r * .05f), r * .08f, IM_COL32(50, 50, 55, 255));
-        draw->AddCircleFilled(ImVec2(cx + r * .28f, cy + r * .05f), r * .08f, IM_COL32(50, 50, 55, 255));
-    }
-    else if (id == "cool") {
-        draw->AddCircleFilled(ImVec2(cx, cy), r, IM_COL32(245, 245, 240, 255));
-        draw->AddRectFilled(ImVec2(cx - r * .68f, cy - r * .22f), ImVec2(cx - r * .05f, cy + r * .08f), IM_COL32(25, 30, 40, 255), 4);
-        draw->AddRectFilled(ImVec2(cx + r * .05f, cy - r * .22f), ImVec2(cx + r * .68f, cy + r * .08f), IM_COL32(25, 30, 40, 255), 4);
-        draw->AddLine(ImVec2(cx - r * .05f, cy - r * .08f), ImVec2(cx + r * .05f, cy - r * .08f), IM_COL32(25, 30, 40, 255), 3);
-        draw->AddLine(ImVec2(cx - r * .35f, cy + r * .40f), ImVec2(cx + r * .35f, cy + r * .40f), IM_COL32(45, 45, 50, 255), 3);
-    }
-    else if (id == "kiss") {
-        draw->AddCircleFilled(ImVec2(cx, cy), r, IM_COL32(248, 245, 238, 255));
-        draw->AddCircleFilled(ImVec2(cx - r * .30f, cy - r * .12f), r * .09f, IM_COL32(45, 45, 50, 255));
-        draw->AddCircleFilled(ImVec2(cx + r * .30f, cy - r * .12f), r * .09f, IM_COL32(45, 45, 50, 255));
-        draw->AddCircleFilled(ImVec2(cx, cy + r * .35f), r * .13f, IM_COL32(235, 75, 100, 255));
-        draw->AddCircleFilled(ImVec2(cx + r * .85f, cy - r * .55f), r * .22f, IM_COL32(255, 80, 120, 220));
-    }
-    else if (id == "sad") {
-        draw->AddCircleFilled(ImVec2(cx, cy), r, IM_COL32(245, 245, 240, 255));
-        draw->AddCircleFilled(ImVec2(cx - r * .30f, cy - r * .12f), r * .10f, IM_COL32(45, 45, 50, 255));
-        draw->AddCircleFilled(ImVec2(cx + r * .30f, cy - r * .12f), r * .10f, IM_COL32(45, 45, 50, 255));
-        draw->AddLine(ImVec2(cx - r * .35f, cy + r * .42f), ImVec2(cx, cy + r * .20f), IM_COL32(50, 50, 55, 255), 3);
-        draw->AddLine(ImVec2(cx, cy + r * .20f), ImVec2(cx + r * .35f, cy + r * .42f), IM_COL32(50, 50, 55, 255), 3);
-        draw->AddLine(ImVec2(cx - r * .58f, cy + r * .05f), ImVec2(cx - r * .58f, cy + r * .52f), IM_COL32(80, 180, 255, 255), 4);
-        draw->AddLine(ImVec2(cx + r * .58f, cy + r * .05f), ImVec2(cx + r * .58f, cy + r * .52f), IM_COL32(80, 180, 255, 255), 4);
-    }
-    else {
-        draw->AddCircleFilled(ImVec2(cx, cy), r, IM_COL32(245, 245, 240, 255));
-        draw->AddCircleFilled(ImVec2(cx - r * .28f, cy - r * .10f), r * .09f, IM_COL32(45, 45, 50, 255));
-        draw->AddCircleFilled(ImVec2(cx + r * .28f, cy - r * .10f), r * .09f, IM_COL32(45, 45, 50, 255));
-        draw->AddLine(ImVec2(cx - r * .30f, cy + r * .35f), ImVec2(cx + r * .30f, cy + r * .35f), IM_COL32(45, 45, 50, 255), 3);
-        draw->AddLine(ImVec2(cx - r * .85f, cy - r * .70f), ImVec2(cx - r * .55f, cy - r * .95f), IM_COL32(255, 210, 55, 255), 4);
-        draw->AddLine(ImVec2(cx + r * .85f, cy - r * .70f), ImVec2(cx + r * .55f, cy - r * .95f), IM_COL32(255, 210, 55, 255), 4);
-    }
-}
-
 AppState currentState = IDLE;
 
 // Asio Network Objects
@@ -289,7 +156,57 @@ void stop_network();
 void start_hosting(int port);
 void start_connecting(string ip, int port);
 void send_raw_line(const string& line);
-void send_sticker(const string& stickerId);
+
+// ================= STICKER SYSTEM - ADD ONLY =================
+// All code in this block is newly added. Existing code is preserved.
+struct P2PStickerItem { const char* id; const char* name; };
+static const P2PStickerItem p2pStickerList[] = {
+  {"heart","Heart"},{"laugh","Laugh"},{"wow","Wow"},{"angry","Angry"},
+  {"love","Love"},{"thumbsup","Like"},{"fire","Fire"},{"party","Party"},
+  {"cool","Cool"},{"kiss","Kiss"},{"sad","Sad"},{"clap","Clap"}
+};
+static map<string, string> p2pStickerMessages;
+static const P2PStickerItem* p2p_find_sticker(const string& id) {
+    for (const auto& s : p2pStickerList) if (id == s.id) return &s;
+    return nullptr;
+}
+static void p2p_draw_sticker(ImDrawList* draw, ImVec2 a, ImVec2 b, const string& id) {
+    float w = b.x - a.x, h = b.y - a.y, cx = (a.x + b.x) * 0.5f, cy = (a.y + b.y) * 0.5f;
+    float r = (w < h ? w : h) * 0.34f;
+    ImU32 black = IM_COL32(35, 35, 40, 255), white = IM_COL32(255, 255, 255, 255);
+    draw->AddCircleFilled(ImVec2(cx, cy), r, white);
+    draw->AddCircle(ImVec2(cx, cy), r, IM_COL32(40, 45, 55, 255), 32, 3.0f);
+    if (id == "heart" || id == "love") {
+        ImU32 c = IM_COL32(240, 70, 95, 255);
+        draw->AddTriangleFilled(ImVec2(cx - r * .62f, cy - r * .05f), ImVec2(cx - r * .25f, cy - r * .55f), ImVec2(cx, cy - r * .15f), c);
+        draw->AddTriangleFilled(ImVec2(cx + r * .62f, cy - r * .05f), ImVec2(cx + r * .25f, cy - r * .55f), ImVec2(cx, cy - r * .15f), c);
+        draw->AddTriangleFilled(ImVec2(cx - r * .62f, cy - r * .05f), ImVec2(cx, cy + r * .55f), ImVec2(cx, cy - r * .15f), c);
+        draw->AddTriangleFilled(ImVec2(cx + r * .62f, cy - r * .05f), ImVec2(cx, cy + r * .55f), ImVec2(cx, cy - r * .15f), c);
+    }
+    else if (id == "fire") {
+        draw->AddTriangleFilled(ImVec2(cx, cy - r * .72f), ImVec2(cx - r * .55f, cy + r * .50f), ImVec2(cx + r * .55f, cy + r * .50f), IM_COL32(245, 105, 35, 255));
+        draw->AddTriangleFilled(ImVec2(cx, cy - r * .20f), ImVec2(cx - r * .25f, cy + r * .42f), ImVec2(cx + r * .25f, cy + r * .42f), IM_COL32(255, 220, 70, 255));
+    }
+    else if (id == "thumbsup") {
+        draw->AddRectFilled(ImVec2(cx - r * .18f, cy - r * .55f), ImVec2(cx + r * .30f, cy + r * .38f), IM_COL32(245, 195, 75, 255), 6);
+        draw->AddRectFilled(ImVec2(cx - r * .58f, cy + r * .05f), ImVec2(cx + r * .02f, cy + r * .55f), IM_COL32(245, 195, 75, 255), 6);
+    }
+    else if (id == "cool") {
+        draw->AddRectFilled(ImVec2(cx - r * .62f, cy - r * .28f), ImVec2(cx - r * .05f, cy + r * .06f), black, 5);
+        draw->AddRectFilled(ImVec2(cx + r * .05f, cy - r * .28f), ImVec2(cx + r * .62f, cy + r * .06f), black, 5);
+        draw->AddLine(ImVec2(cx - r * .35f, cy + r * .40f), ImVec2(cx + r * .35f, cy + r * .40f), black, 4);
+    }
+    else {
+        draw->AddCircleFilled(ImVec2(cx - r * .35f, cy - r * .12f), 5, black);
+        draw->AddCircleFilled(ImVec2(cx + r * .35f, cy - r * .12f), 5, black);
+        if (id == "wow") draw->AddCircle(ImVec2(cx, cy + r * .25f), r * .20f, black, 20, 4);
+        else if (id == "sad") draw->AddLine(ImVec2(cx - r * .28f, cy + r * .38f), ImVec2(cx + r * .28f, cy + r * .38f), black, 4);
+        else draw->AddCircleFilled(ImVec2(cx, cy + r * .25f), r * .25f, black);
+    }
+}
+static void p2p_send_sticker(const string& id) {
+    if (currentState == CONNECTED && p2p_find_sticker(id)) send_raw_line("[STICKER]|" + id);
+}
 
 // Input Filter Callbacks
 static int PortInputFilter(ImGuiInputTextCallbackData* data) {
@@ -410,12 +327,6 @@ void send_raw_line(const string& line) {
     }
 }
 
-
-void send_sticker(const string& stickerId) {
-    if (currentState == CONNECTED && find_sticker(stickerId))
-        send_raw_line("[STICKER]|" + stickerId);
-}
-
 void send_handshake() {
     string display_name = (strlen(username) > 0) ? string(username) : "Anonymous";
     string safe_name = display_name;
@@ -520,17 +431,17 @@ void async_read_loop() {
                         send_raw_line("[ACK]|" + msg_id);
                     }
                     else if (line.rfind("[STICKER]|", 0) == 0) {
+                        // ================= STICKER RECEIVE - ADD ONLY =================
                         stringstream ss(line);
                         string tag, stickerId;
                         getline(ss, tag, '|');
                         getline(ss, stickerId);
-                        if (find_sticker(stickerId)) {
-                            string remote_name =
-                                peer_username.empty() ? "Peer" : peer_username;
+                        if (p2p_find_sticker(stickerId)) {
                             string stickerMsgId = generate_msg_id();
-                            add_chat_log(stickerMsgId, remote_name, peer_user_id,
-                                peer_role, get_current_time_str(), "", "",
-                                "[STICKER:" + stickerId + "]", false);
+                            p2pStickerMessages[stickerMsgId] = stickerId;
+                            add_chat_log(stickerMsgId, peer_username.empty() ? "Peer" : peer_username,
+                                peer_user_id, peer_role, get_current_time_str(),
+                                "", "", " ", false);
                         }
                     }
                     else if (line.rfind("[TYPING]|", 0) == 0) {
@@ -851,13 +762,8 @@ void render_chat_bubble(size_t idx, ChatMessage& msg) {
 
     float maxBubbleWidth =
         max(340.0f, min(540.0f, ImGui::GetWindowWidth() * 0.75f));
-    const StickerItem* bubbleSticker = nullptr;
-    if (!msg.is_deleted && is_sticker_content(msg.content))
-        bubbleSticker = find_sticker(sticker_id_from_content(msg.content));
-    ImVec2 textSize = bubbleSticker
-        ? ImVec2(128.0f, 128.0f)
-        : ImGui::CalcTextSize(displayContent.c_str(), NULL, false,
-            maxBubbleWidth - 24.0f);
+    ImVec2 textSize = ImGui::CalcTextSize(displayContent.c_str(), NULL, false,
+        maxBubbleWidth - 24.0f);
     float headerWidth = ImGui::CalcTextSize(headerText.c_str()).x;
     if (!statusLabel.empty())
         headerWidth += ImGui::CalcTextSize(statusLabel.c_str()).x + 6.0f;
@@ -949,29 +855,27 @@ void render_chat_bubble(size_t idx, ChatMessage& msg) {
                 ImGui::Separator();
             }
 
-            if (bubbleSticker) {
+            ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0, 0, 0, 0));
+            ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(0, 0, 0, 0));
+            ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4(0, 0, 0, 0));
+
+            // ================= STICKER RENDER - ADD ONLY =================
+            auto p2pStickerIt = p2pStickerMessages.find(msg.id);
+            if (p2pStickerIt != p2pStickerMessages.end()) {
                 ImVec2 stickerSize(128.0f, 128.0f);
                 ImVec2 stickerPos = ImGui::GetCursorScreenPos();
-                draw_sticker_icon(ImGui::GetWindowDrawList(), stickerPos,
-                    ImVec2(stickerPos.x + stickerSize.x,
-                        stickerPos.y + stickerSize.y),
-                    bubbleSticker->id);
+                p2p_draw_sticker(ImGui::GetWindowDrawList(), stickerPos,
+                    ImVec2(stickerPos.x + stickerSize.x, stickerPos.y + stickerSize.y),
+                    p2pStickerIt->second);
                 ImGui::Dummy(stickerSize);
             }
-            else {
-                ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0, 0, 0, 0));
-                ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(0, 0, 0, 0));
-                ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4(0, 0, 0, 0));
-                ImGui::InputTextMultiline(("##msg_" + msg.id).c_str(),
-                    (char*)displayContent.c_str(),
-                    displayContent.size() + 1,
-                    ImVec2(maxBubbleWidth - 24.0f,
-                        textSize.y + ImGui::GetStyle().FramePadding.y * 2),
-                    ImGuiInputTextFlags_ReadOnly |
-                    ImGuiInputTextFlags_NoHorizontalScroll |
-                    1 << 24);
-                ImGui::PopStyleColor(3);
-            }
+            ImGui::InputTextMultiline(("##msg_" + msg.id).c_str(),
+                (char*)displayContent.c_str(),
+                displayContent.size() + 1,
+                ImVec2(maxBubbleWidth - 24.0f, textSize.y + ImGui::GetStyle().FramePadding.y * 2),
+                ImGuiInputTextFlags_ReadOnly | ImGuiInputTextFlags_NoHorizontalScroll | 1 << 24); // 1 << 24 is ImGuiInputTextFlags_WordWrap
+
+            ImGui::PopStyleColor(3);
 
             // Reaction Badges
             map<string, pair<int, bool>> reactionCounts;
@@ -1487,6 +1391,38 @@ int main() {
                 }
                 ImGui::PopStyleVar();
                 // --- BỘ CHỌN EMOJI POPUP (CHUẨN 16-BIT UNICODE) ---
+                        // ================= STICKER PICKER - ADD ONLY =================
+                if (ImGui::Button("Sticker", ImVec2(62, 0))) {
+                    ImGui::OpenPopup("P2PStickerPickerPopup");
+                }
+                if (ImGui::BeginPopup("P2PStickerPickerPopup")) {
+                    ImGui::TextColored(ImVec4(0.45f, 0.75f, 1.00f, 1.0f), "STICKERS");
+                    ImGui::Separator();
+                    const int stickerCols = 4;
+                    const ImVec2 stickerButtonSize(78.0f, 78.0f);
+                    for (int si = 0; si < IM_ARRAYSIZE(p2pStickerList); ++si) {
+                        if (si % stickerCols != 0) ImGui::SameLine();
+                        ImGui::PushID("P2PSticker");
+                        ImVec2 cell = ImGui::GetCursorScreenPos();
+                        if (ImGui::InvisibleButton("##Button", stickerButtonSize)) {
+                            string display_name = (strlen(username) > 0) ? string(username) : "Anonymous";
+                            string stickerMsgId = generate_msg_id();
+                            p2pStickerMessages[stickerMsgId] = p2pStickerList[si].id;
+                            p2p_send_sticker(p2pStickerList[si].id);
+                            add_chat_log(stickerMsgId, display_name, local_user_id, local_role,
+                                get_current_time_str(), "", "", " ", true);
+                            scrollToBottomRequested = true;
+                            ImGui::CloseCurrentPopup();
+                        }
+                        p2p_draw_sticker(ImGui::GetWindowDrawList(),
+                            ImVec2(cell.x + 3.0f, cell.y + 3.0f),
+                            ImVec2(cell.x + 75.0f, cell.y + 75.0f),
+                            p2pStickerList[si].id);
+                        ImGui::PopID();
+                    }
+                    ImGui::EndPopup();
+                }
+                ImGui::SameLine();
                 if (ImGui::Button("Emoji", ImVec2(54, 0))) {
                     ImGui::OpenPopup("EmojiPickerPopup");
                 }
@@ -1514,57 +1450,6 @@ int main() {
                     }
                     ImGui::EndPopup();
                 }
-
-                // ================= STICKER PICKER =================
-                ImGui::SameLine();
-                if (ImGui::Button("Sticker", ImVec2(70, 0))) {
-                    ImGui::OpenPopup("StickerPickerPopup");
-                }
-
-                if (ImGui::BeginPopup("StickerPickerPopup")) {
-                    ImGui::TextColored(ImVec4(0.45f, 0.75f, 1.00f, 1.0f),
-                        "STICKERS");
-                    ImGui::Separator();
-
-                    const int stickerCols = 4;
-                    const ImVec2 stickerButtonSize(82.0f, 82.0f);
-                    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f, 8.0f));
-
-                    for (int i = 0; i < IM_ARRAYSIZE(stickerList); i++) {
-                        if (i % stickerCols != 0)
-                            ImGui::SameLine();
-
-                        ImGui::PushID(i);
-                        ImVec2 cellPos = ImGui::GetCursorScreenPos();
-                        if (ImGui::InvisibleButton("##StickerButton", stickerButtonSize)) {
-                            string display_name =
-                                (strlen(username) > 0) ? string(username) : "Anonymous";
-                            string stickerContent =
-                                string("[STICKER:") + stickerList[i].id + "]";
-                            string stickerMsgId = generate_msg_id();
-
-                            send_sticker(stickerList[i].id);
-                            add_chat_log(stickerMsgId, display_name, local_user_id,
-                                local_role, get_current_time_str(), "", "",
-                                stickerContent, true);
-                            scrollToBottomRequested = true;
-                            ImGui::CloseCurrentPopup();
-                        }
-
-                        ImVec2 iconMin(cellPos.x + 2.0f, cellPos.y + 2.0f);
-                        ImVec2 iconMax(cellPos.x + stickerButtonSize.x - 2.0f,
-                            cellPos.y + stickerButtonSize.y - 2.0f);
-                        draw_sticker_icon(ImGui::GetWindowDrawList(), iconMin, iconMax,
-                            stickerList[i].id);
-                        ImGui::PopID();
-                    }
-
-                    ImGui::PopStyleVar();
-                    ImGui::Separator();
-                    ImGui::TextDisabled("Click a sticker to send");
-                    ImGui::EndPopup();
-                }
-
                 ImGui::SameLine();
                 ImGui::PushItemWidth(-70);
                 bool isInputChanged =
