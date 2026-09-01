@@ -92,6 +92,139 @@ char messageBuf[1024] = "";
 char editMessageBuf[1024] = "";
 char searchBuf[128] = "";
 
+// ================= STICKER SYSTEM =================
+// Sticker được vẽ trực tiếp bằng ImDrawList nên không phụ thuộc font Emoji.
+// Gói mạng riêng: [STICKER]|sticker_id
+struct StickerItem {
+    const char* id;
+    const char* name;
+};
+
+static const StickerItem stickerList[] = {
+    {"heart", "Love"}, {"laugh", "Laugh"}, {"wow", "Wow"},
+    {"angry", "Angry"}, {"love", "Cute"}, {"thumbsup", "Like"},
+    {"fire", "Fire"}, {"party", "Party"}, {"cool", "Cool"},
+    {"kiss", "Kiss"}, {"sad", "Sad"}, {"clap", "Clap"} };
+
+static const StickerItem* find_sticker(const string& id) {
+    for (const auto& sticker : stickerList) {
+        if (id == sticker.id)
+            return &sticker;
+    }
+    return nullptr;
+}
+
+static bool is_sticker_content(const string& content) {
+    return content.rfind("[STICKER:", 0) == 0 && !content.empty() &&
+        content.back() == ']';
+}
+
+static string sticker_id_from_content(const string& content) {
+    if (!is_sticker_content(content))
+        return "";
+    return content.substr(9, content.size() - 10);
+}
+
+// Vẽ sticker bằng hình học đơn giản. Không sử dụng ký tự Emoji =>
+// không còn hiện ô vuông/kim cương khi chọn hoặc nhận sticker.
+static void draw_sticker_icon(ImDrawList* draw, const ImVec2& min,
+    const ImVec2& max, const string& id) {
+    float w = max.x - min.x;
+    float h = max.y - min.y;
+    float cx = (min.x + max.x) * 0.5f;
+    float cy = (min.y + max.y) * 0.5f;
+    float r = (std::min)(w, h) * 0.30f;
+
+    draw->AddRectFilled(min, max, IM_COL32(31, 40, 56, 255), 14.0f);
+    draw->AddRect(min, max, IM_COL32(75, 91, 120, 180), 14.0f, 0, 1.5f);
+
+    if (id == "heart") {
+        draw->AddCircleFilled(ImVec2(cx - r * .48f, cy - r * .20f), r * .62f, IM_COL32(255, 75, 105, 255));
+        draw->AddCircleFilled(ImVec2(cx + r * .48f, cy - r * .20f), r * .62f, IM_COL32(255, 75, 105, 255));
+        draw->AddTriangleFilled(ImVec2(cx - r * 1.05f, cy), ImVec2(cx + r * 1.05f, cy), ImVec2(cx, cy + r * .70f), IM_COL32(255, 75, 105, 255));
+        draw->AddCircleFilled(ImVec2(cx - r * .55f, cy - r * .35f), r * .12f, IM_COL32(255, 190, 205, 255));
+    }
+    else if (id == "laugh") {
+        draw->AddCircleFilled(ImVec2(cx, cy), r, IM_COL32(255, 205, 55, 255));
+        draw->AddCircleFilled(ImVec2(cx - r * .35f, cy - r * .18f), r * .10f, IM_COL32(45, 45, 45, 255));
+        draw->AddCircleFilled(ImVec2(cx + r * .35f, cy - r * .18f), r * .10f, IM_COL32(45, 45, 45, 255));
+        draw->AddCircle(ImVec2(cx, cy + r * .28f), r * .34f, IM_COL32(70, 45, 45, 255), 24, 3.0f);
+        draw->AddCircleFilled(ImVec2(cx - r * .72f, cy + r * .15f), r * .22f, IM_COL32(90, 190, 255, 230));
+        draw->AddCircleFilled(ImVec2(cx + r * .72f, cy + r * .15f), r * .22f, IM_COL32(90, 190, 255, 230));
+    }
+    else if (id == "wow") {
+        draw->AddCircleFilled(ImVec2(cx, cy), r, IM_COL32(245, 245, 245, 255));
+        draw->AddCircleFilled(ImVec2(cx - r * .35f, cy - r * .20f), r * .18f, IM_COL32(40, 40, 50, 255));
+        draw->AddCircleFilled(ImVec2(cx + r * .35f, cy - r * .20f), r * .18f, IM_COL32(40, 40, 50, 255));
+        draw->AddCircleFilled(ImVec2(cx, cy + r * .35f), r * .18f, IM_COL32(45, 45, 55, 255));
+        draw->AddCircleFilled(ImVec2(cx - r * .92f, cy - r * .55f), r * .09f, IM_COL32(255, 210, 65, 255));
+        draw->AddCircleFilled(ImVec2(cx + r * .92f, cy - r * .55f), r * .09f, IM_COL32(255, 210, 65, 255));
+    }
+    else if (id == "angry") {
+        draw->AddCircleFilled(ImVec2(cx, cy), r, IM_COL32(245, 90, 45, 255));
+        draw->AddLine(ImVec2(cx - r * .55f, cy - r * .35f), ImVec2(cx - r * .10f, cy - r * .15f), IM_COL32(55, 30, 30, 255), 4);
+        draw->AddLine(ImVec2(cx + r * .55f, cy - r * .35f), ImVec2(cx + r * .10f, cy - r * .15f), IM_COL32(55, 30, 30, 255), 4);
+        draw->AddLine(ImVec2(cx - r * .38f, cy + r * .42f), ImVec2(cx + r * .38f, cy + r * .42f), IM_COL32(55, 30, 30, 255), 4);
+    }
+    else if (id == "love") {
+        draw->AddCircleFilled(ImVec2(cx, cy), r, IM_COL32(248, 245, 238, 255));
+        draw->AddCircleFilled(ImVec2(cx - r * .35f, cy - r * .10f), r * .09f, IM_COL32(45, 45, 50, 255));
+        draw->AddCircleFilled(ImVec2(cx + r * .35f, cy - r * .10f), r * .09f, IM_COL32(45, 45, 50, 255));
+        draw->AddCircleFilled(ImVec2(cx, cy + r * .42f), r * .38f, IM_COL32(255, 70, 100, 255));
+        draw->AddCircleFilled(ImVec2(cx - r * .75f, cy - r * .55f), r * .16f, IM_COL32(255, 150, 175, 255));
+        draw->AddCircleFilled(ImVec2(cx + r * .75f, cy - r * .55f), r * .16f, IM_COL32(255, 150, 175, 255));
+    }
+    else if (id == "thumbsup") {
+        draw->AddCircleFilled(ImVec2(cx, cy), r, IM_COL32(255, 205, 55, 255));
+        draw->AddRectFilled(ImVec2(cx - r * .28f, cy - r * .05f), ImVec2(cx + r * .45f, cy + r * .48f), IM_COL32(255, 190, 35, 255), r * .12f);
+        draw->AddRectFilled(ImVec2(cx - r * .05f, cy - r * .72f), ImVec2(cx + r * .30f, cy + r * .08f), IM_COL32(255, 205, 55, 255), r * .10f);
+        draw->AddLine(ImVec2(cx - r * .20f, cy + r * .18f), ImVec2(cx - r * .65f, cy + r * .18f), IM_COL32(180, 120, 20, 255), 5);
+    }
+    else if (id == "fire") {
+        draw->AddTriangleFilled(ImVec2(cx, cy - r * 1.05f), ImVec2(cx - r * .82f, cy + r * .75f), ImVec2(cx + r * .82f, cy + r * .75f), IM_COL32(255, 90, 35, 255));
+        draw->AddCircleFilled(ImVec2(cx, cy + r * .42f), r * .48f, IM_COL32(255, 195, 45, 255));
+        draw->AddTriangleFilled(ImVec2(cx, cy - r * .15f), ImVec2(cx - r * .35f, cy + r * .60f), ImVec2(cx + r * .35f, cy + r * .60f), IM_COL32(255, 225, 80, 255));
+    }
+    else if (id == "party") {
+        draw->AddCircleFilled(ImVec2(cx, cy + r * .05f), r * .72f, IM_COL32(245, 245, 240, 255));
+        draw->AddTriangleFilled(ImVec2(cx - r * .65f, cy - r * .55f), ImVec2(cx + r * .35f, cy - r * .95f), ImVec2(cx - r * .05f, cy - r * .15f), IM_COL32(80, 160, 255, 255));
+        draw->AddLine(ImVec2(cx - r * .55f, cy - r * .50f), ImVec2(cx + r * .25f, cy - r * .75f), IM_COL32(255, 80, 120, 255), 4);
+        draw->AddCircleFilled(ImVec2(cx - r * .28f, cy + r * .05f), r * .08f, IM_COL32(50, 50, 55, 255));
+        draw->AddCircleFilled(ImVec2(cx + r * .28f, cy + r * .05f), r * .08f, IM_COL32(50, 50, 55, 255));
+    }
+    else if (id == "cool") {
+        draw->AddCircleFilled(ImVec2(cx, cy), r, IM_COL32(245, 245, 240, 255));
+        draw->AddRectFilled(ImVec2(cx - r * .68f, cy - r * .22f), ImVec2(cx - r * .05f, cy + r * .08f), IM_COL32(25, 30, 40, 255), 4);
+        draw->AddRectFilled(ImVec2(cx + r * .05f, cy - r * .22f), ImVec2(cx + r * .68f, cy + r * .08f), IM_COL32(25, 30, 40, 255), 4);
+        draw->AddLine(ImVec2(cx - r * .05f, cy - r * .08f), ImVec2(cx + r * .05f, cy - r * .08f), IM_COL32(25, 30, 40, 255), 3);
+        draw->AddLine(ImVec2(cx - r * .35f, cy + r * .40f), ImVec2(cx + r * .35f, cy + r * .40f), IM_COL32(45, 45, 50, 255), 3);
+    }
+    else if (id == "kiss") {
+        draw->AddCircleFilled(ImVec2(cx, cy), r, IM_COL32(248, 245, 238, 255));
+        draw->AddCircleFilled(ImVec2(cx - r * .30f, cy - r * .12f), r * .09f, IM_COL32(45, 45, 50, 255));
+        draw->AddCircleFilled(ImVec2(cx + r * .30f, cy - r * .12f), r * .09f, IM_COL32(45, 45, 50, 255));
+        draw->AddCircleFilled(ImVec2(cx, cy + r * .35f), r * .13f, IM_COL32(235, 75, 100, 255));
+        draw->AddCircleFilled(ImVec2(cx + r * .85f, cy - r * .55f), r * .22f, IM_COL32(255, 80, 120, 220));
+    }
+    else if (id == "sad") {
+        draw->AddCircleFilled(ImVec2(cx, cy), r, IM_COL32(245, 245, 240, 255));
+        draw->AddCircleFilled(ImVec2(cx - r * .30f, cy - r * .12f), r * .10f, IM_COL32(45, 45, 50, 255));
+        draw->AddCircleFilled(ImVec2(cx + r * .30f, cy - r * .12f), r * .10f, IM_COL32(45, 45, 50, 255));
+        draw->AddLine(ImVec2(cx - r * .35f, cy + r * .42f), ImVec2(cx, cy + r * .20f), IM_COL32(50, 50, 55, 255), 3);
+        draw->AddLine(ImVec2(cx, cy + r * .20f), ImVec2(cx + r * .35f, cy + r * .42f), IM_COL32(50, 50, 55, 255), 3);
+        draw->AddLine(ImVec2(cx - r * .58f, cy + r * .05f), ImVec2(cx - r * .58f, cy + r * .52f), IM_COL32(80, 180, 255, 255), 4);
+        draw->AddLine(ImVec2(cx + r * .58f, cy + r * .05f), ImVec2(cx + r * .58f, cy + r * .52f), IM_COL32(80, 180, 255, 255), 4);
+    }
+    else {
+        draw->AddCircleFilled(ImVec2(cx, cy), r, IM_COL32(245, 245, 240, 255));
+        draw->AddCircleFilled(ImVec2(cx - r * .28f, cy - r * .10f), r * .09f, IM_COL32(45, 45, 50, 255));
+        draw->AddCircleFilled(ImVec2(cx + r * .28f, cy - r * .10f), r * .09f, IM_COL32(45, 45, 50, 255));
+        draw->AddLine(ImVec2(cx - r * .30f, cy + r * .35f), ImVec2(cx + r * .30f, cy + r * .35f), IM_COL32(45, 45, 50, 255), 3);
+        draw->AddLine(ImVec2(cx - r * .85f, cy - r * .70f), ImVec2(cx - r * .55f, cy - r * .95f), IM_COL32(255, 210, 55, 255), 4);
+        draw->AddLine(ImVec2(cx + r * .85f, cy - r * .70f), ImVec2(cx + r * .55f, cy - r * .95f), IM_COL32(255, 210, 55, 255), 4);
+    }
+}
+
 AppState currentState = IDLE;
 
 // Asio Network Objects
@@ -156,303 +289,7 @@ void stop_network();
 void start_hosting(int port);
 void start_connecting(string ip, int port);
 void send_raw_line(const string& line);
-
-// Forward declaration for LAN Auto Room Discovery
-bool isValidPort(const string& portStr, int& outPort);
-
-// LAN AUTO ROOM DISCOVERY
-
-namespace AutoRoomDiscovery {
-
-    const unsigned short DISCOVERY_PORT = 37020;
-
-    mutex discovery_mutex;
-    thread discovery_thread;
-
-    bool discovery_running = false;
-
-    string discovered_ip = "";
-    int discovered_port = 0;
-    string discovered_name = "";
-
-    chrono::steady_clock::time_point last_broadcast_time;
-
-    // Gửi broadcast để thông báo Host đang mở phòng
- 
-    void broadcast_room(int tcp_port, const string& room_name) {
-
-        try {
-            asio::io_context io;
-
-            asio::ip::udp::socket socket(io);
-            socket.open(asio::ip::udp::v4());
-
-            socket.set_option(
-                asio::ip::udp::socket::broadcast(true));
-
-            asio::ip::udp::endpoint broadcast_endpoint(
-                asio::ip::address_v4::broadcast(),
-                DISCOVERY_PORT);
-
-            string safe_name = room_name;
-            replace(safe_name.begin(), safe_name.end(), '|', '/');
-
-            string packet =
-                "[P2P_ROOM]|" +
-                to_string(tcp_port) +
-                "|" +
-                safe_name;
-
-            asio::error_code ec;
-
-            socket.send_to(
-                asio::buffer(packet),
-                broadcast_endpoint,
-                0,
-                ec);
-
-            socket.close();
-
-        }
-        catch (...) {
-            // Discovery khong duoc lam crash app
-        }
-    }
-
-
-    // Thread lắng nghe các Host trong LAN
-  
-    void listener() {
-
-        try {
-
-            asio::io_context io;
-
-            asio::ip::udp::socket socket(
-                io,
-                asio::ip::udp::endpoint(
-                    asio::ip::udp::v4(),
-                    DISCOVERY_PORT));
-
-            socket.set_option(
-                asio::ip::udp::socket::reuse_address(true));
-
-            socket.non_blocking(true);
-
-            char data[1024];
-
-            while (true) {
-
-                {
-                    lock_guard<mutex> lock(discovery_mutex);
-
-                    if (!discovery_running)
-                        break;
-                }
-
-                asio::ip::udp::endpoint sender;
-                asio::error_code ec;
-
-                size_t length = socket.receive_from(
-                    asio::buffer(data, sizeof(data) - 1),
-                    sender,
-                    0,
-                    ec);
-
-                if (!ec && length > 0) {
-
-                    data[length] = '\0';
-
-                    string packet(data);
-
-                    if (packet.rfind("[P2P_ROOM]|", 0) == 0) {
-
-                        stringstream ss(packet);
-
-                        string tag;
-                        string port_text;
-                        string room_name;
-
-                        getline(ss, tag, '|');
-                        getline(ss, port_text, '|');
-                        getline(ss, room_name);
-
-                        int room_port = 0;
-
-                        if (isValidPort(port_text, room_port)) {
-
-                            string host_ip =
-                                sender.address().to_string();
-
-                            lock_guard<mutex> lock(discovery_mutex);
-
-                            // Chỉ lưu phòng đầu tiên tìm được
-                            if (discovered_port == 0) {
-
-                                discovered_ip = host_ip;
-                                discovered_port = room_port;
-                                discovered_name = room_name;
-                            }
-                        }
-                    }
-                }
-
-                this_thread::sleep_for(
-                    chrono::milliseconds(100));
-            }
-
-            socket.close();
-        }
-        catch (...) {
-            // Không để discovery làm crash chương trình
-        }
-    }
-
-   
-    // Khởi động listener
-
-    void start() {
-
-        lock_guard<mutex> lock(discovery_mutex);
-
-        if (discovery_running)
-            return;
-
-        discovery_running = true;
-
-        discovery_thread = thread([]() {
-            listener();
-            });
-
-        last_broadcast_time =
-            chrono::steady_clock::now();
-    }
-
-    // --------------------------------------------------------
-    // Lấy phòng được phát hiện
-    // --------------------------------------------------------
-    bool take_discovered_room(
-        string& ip,
-        int& port,
-        string& name) {
-
-        lock_guard<mutex> lock(discovery_mutex);
-
-        if (discovered_port == 0)
-            return false;
-
-        ip = discovered_ip;
-        port = discovered_port;
-        name = discovered_name;
-
-        discovered_ip = "";
-        discovered_port = 0;
-        discovered_name = "";
-
-        return true;
-    }
-
-    // --------------------------------------------------------
-    // Gọi hàm này liên tục trong main loop
-    // --------------------------------------------------------
-    void update() {
-
-        // ----------------------------------------------------
-        // 1. HOST phát hiện phòng của mình
-        // ----------------------------------------------------
-        if (currentState != IDLE &&
-            local_role == "Host") {
-
-            auto now = chrono::steady_clock::now();
-
-            auto elapsed =
-                chrono::duration_cast<chrono::milliseconds>(
-                    now - last_broadcast_time)
-                .count();
-
-            if (elapsed >= 1000) {
-
-                int host_port = 0;
-
-                if (isValidPort(portBuf, host_port)) {
-
-                    string room_name =
-                        (strlen(username) > 0)
-                        ? string(username)
-                        : "P2P Chat Room";
-
-                    broadcast_room(
-                        host_port,
-                        room_name);
-                }
-
-                last_broadcast_time = now;
-            }
-        }
-
-        // ----------------------------------------------------
-        // 2. Nếu tìm thấy Host thì tự động JOIN
-        // ----------------------------------------------------
-        if (currentState == IDLE) {
-
-            string ip;
-            string room_name;
-            int port = 0;
-
-            if (take_discovered_room(
-                ip,
-                port,
-                room_name)) {
-
-                // Điền IP + Port vào giao diện
-                strcpy_s(
-                    targetIP,
-                    sizeof(targetIP),
-                    ip.c_str());
-
-                snprintf(
-                    joinPortBuf,
-                    sizeof(joinPortBuf),
-                    "%d",
-                    port);
-
-                // Thông báo
-                cout
-                    << "[AUTO CONNECT] Found room "
-                    << room_name
-                    << " at "
-                    << ip
-                    << ":"
-                    << port
-                    << endl;
-
-                // Tự động kết nối
-                start_connecting(
-                    ip,
-                    port);
-            }
-        }
-    }
-
-    // --------------------------------------------------------
-    // Dừng Discovery
-    // --------------------------------------------------------
-    void stop() {
-
-        {
-            lock_guard<mutex> lock(discovery_mutex);
-
-            discovery_running = false;
-        }
-
-        if (discovery_thread.joinable())
-            discovery_thread.join();
-    }
-
-}
-// ============================================================
-// END LAN AUTO ROOM DISCOVERY
-// ============================================================
+void send_sticker(const string& stickerId);
 
 // Input Filter Callbacks
 static int PortInputFilter(ImGuiInputTextCallbackData* data) {
@@ -573,6 +410,12 @@ void send_raw_line(const string& line) {
     }
 }
 
+
+void send_sticker(const string& stickerId) {
+    if (currentState == CONNECTED && find_sticker(stickerId))
+        send_raw_line("[STICKER]|" + stickerId);
+}
+
 void send_handshake() {
     string display_name = (strlen(username) > 0) ? string(username) : "Anonymous";
     string safe_name = display_name;
@@ -675,6 +518,20 @@ void async_read_loop() {
                         add_chat_log(msg_id, remote_name, remote_id, remote_role, ts,
                             r_name, r_text, content, false);
                         send_raw_line("[ACK]|" + msg_id);
+                    }
+                    else if (line.rfind("[STICKER]|", 0) == 0) {
+                        stringstream ss(line);
+                        string tag, stickerId;
+                        getline(ss, tag, '|');
+                        getline(ss, stickerId);
+                        if (find_sticker(stickerId)) {
+                            string remote_name =
+                                peer_username.empty() ? "Peer" : peer_username;
+                            string stickerMsgId = generate_msg_id();
+                            add_chat_log(stickerMsgId, remote_name, peer_user_id,
+                                peer_role, get_current_time_str(), "", "",
+                                "[STICKER:" + stickerId + "]", false);
+                        }
                     }
                     else if (line.rfind("[TYPING]|", 0) == 0) {
                         stringstream ss(line);
@@ -994,8 +851,13 @@ void render_chat_bubble(size_t idx, ChatMessage& msg) {
 
     float maxBubbleWidth =
         max(340.0f, min(540.0f, ImGui::GetWindowWidth() * 0.75f));
-    ImVec2 textSize = ImGui::CalcTextSize(displayContent.c_str(), NULL, false,
-        maxBubbleWidth - 24.0f);
+    const StickerItem* bubbleSticker = nullptr;
+    if (!msg.is_deleted && is_sticker_content(msg.content))
+        bubbleSticker = find_sticker(sticker_id_from_content(msg.content));
+    ImVec2 textSize = bubbleSticker
+        ? ImVec2(128.0f, 128.0f)
+        : ImGui::CalcTextSize(displayContent.c_str(), NULL, false,
+            maxBubbleWidth - 24.0f);
     float headerWidth = ImGui::CalcTextSize(headerText.c_str()).x;
     if (!statusLabel.empty())
         headerWidth += ImGui::CalcTextSize(statusLabel.c_str()).x + 6.0f;
@@ -1087,17 +949,29 @@ void render_chat_bubble(size_t idx, ChatMessage& msg) {
                 ImGui::Separator();
             }
 
-            ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0, 0, 0, 0));
-            ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(0, 0, 0, 0));
-            ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4(0, 0, 0, 0));
-
-            ImGui::InputTextMultiline(("##msg_" + msg.id).c_str(),
-                (char*)displayContent.c_str(),
-                displayContent.size() + 1,
-                ImVec2(maxBubbleWidth - 24.0f, textSize.y + ImGui::GetStyle().FramePadding.y * 2),
-                ImGuiInputTextFlags_ReadOnly | ImGuiInputTextFlags_NoHorizontalScroll | 1 << 24); // 1 << 24 is ImGuiInputTextFlags_WordWrap
-
-            ImGui::PopStyleColor(3);
+            if (bubbleSticker) {
+                ImVec2 stickerSize(128.0f, 128.0f);
+                ImVec2 stickerPos = ImGui::GetCursorScreenPos();
+                draw_sticker_icon(ImGui::GetWindowDrawList(), stickerPos,
+                    ImVec2(stickerPos.x + stickerSize.x,
+                        stickerPos.y + stickerSize.y),
+                    bubbleSticker->id);
+                ImGui::Dummy(stickerSize);
+            }
+            else {
+                ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0, 0, 0, 0));
+                ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(0, 0, 0, 0));
+                ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4(0, 0, 0, 0));
+                ImGui::InputTextMultiline(("##msg_" + msg.id).c_str(),
+                    (char*)displayContent.c_str(),
+                    displayContent.size() + 1,
+                    ImVec2(maxBubbleWidth - 24.0f,
+                        textSize.y + ImGui::GetStyle().FramePadding.y * 2),
+                    ImGuiInputTextFlags_ReadOnly |
+                    ImGuiInputTextFlags_NoHorizontalScroll |
+                    1 << 24);
+                ImGui::PopStyleColor(3);
+            }
 
             // Reaction Badges
             map<string, pair<int, bool>> reactionCounts;
@@ -1250,9 +1124,6 @@ int main() {
     srand(static_cast<unsigned int>(time(nullptr)));
     local_user_id = generate_random_id();
 
-    // Start LAN automatic room discovery
-    AutoRoomDiscovery::start();
-
     if (!glfwInit())
         return -1;
     GLFWwindow* window = glfwCreateWindow(760, 860, "P2P Chat", NULL, NULL);
@@ -1312,7 +1183,6 @@ int main() {
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
-        AutoRoomDiscovery::update();
 
         ImGuiViewport* viewport = ImGui::GetMainViewport();
         ImGui::SetNextWindowPos(viewport->WorkPos);
@@ -1644,6 +1514,57 @@ int main() {
                     }
                     ImGui::EndPopup();
                 }
+
+                // ================= STICKER PICKER =================
+                ImGui::SameLine();
+                if (ImGui::Button("Sticker", ImVec2(70, 0))) {
+                    ImGui::OpenPopup("StickerPickerPopup");
+                }
+
+                if (ImGui::BeginPopup("StickerPickerPopup")) {
+                    ImGui::TextColored(ImVec4(0.45f, 0.75f, 1.00f, 1.0f),
+                        "STICKERS");
+                    ImGui::Separator();
+
+                    const int stickerCols = 4;
+                    const ImVec2 stickerButtonSize(82.0f, 82.0f);
+                    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f, 8.0f));
+
+                    for (int i = 0; i < IM_ARRAYSIZE(stickerList); i++) {
+                        if (i % stickerCols != 0)
+                            ImGui::SameLine();
+
+                        ImGui::PushID(i);
+                        ImVec2 cellPos = ImGui::GetCursorScreenPos();
+                        if (ImGui::InvisibleButton("##StickerButton", stickerButtonSize)) {
+                            string display_name =
+                                (strlen(username) > 0) ? string(username) : "Anonymous";
+                            string stickerContent =
+                                string("[STICKER:") + stickerList[i].id + "]";
+                            string stickerMsgId = generate_msg_id();
+
+                            send_sticker(stickerList[i].id);
+                            add_chat_log(stickerMsgId, display_name, local_user_id,
+                                local_role, get_current_time_str(), "", "",
+                                stickerContent, true);
+                            scrollToBottomRequested = true;
+                            ImGui::CloseCurrentPopup();
+                        }
+
+                        ImVec2 iconMin(cellPos.x + 2.0f, cellPos.y + 2.0f);
+                        ImVec2 iconMax(cellPos.x + stickerButtonSize.x - 2.0f,
+                            cellPos.y + stickerButtonSize.y - 2.0f);
+                        draw_sticker_icon(ImGui::GetWindowDrawList(), iconMin, iconMax,
+                            stickerList[i].id);
+                        ImGui::PopID();
+                    }
+
+                    ImGui::PopStyleVar();
+                    ImGui::Separator();
+                    ImGui::TextDisabled("Click a sticker to send");
+                    ImGui::EndPopup();
+                }
+
                 ImGui::SameLine();
                 ImGui::PushItemWidth(-70);
                 bool isInputChanged =
@@ -1710,7 +1631,7 @@ int main() {
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
         glfwSwapBuffers(window);
     }
-    AutoRoomDiscovery::stop();
+
     stop_network();
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
