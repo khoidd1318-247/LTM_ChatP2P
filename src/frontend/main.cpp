@@ -94,105 +94,6 @@ char searchBuf[128] = "";
 
 AppState currentState = IDLE;
 
-// Sticker forward declaration - ADD ONLY
-void send_raw_line(const string& line);
-
-// ================= STICKER - ADD ONLY =================
-// Phan nay chi duoc THEM, khong thay the/xoa code cu.
-struct SimpleSticker {
-    const char* id;
-    const char* label;
-};
-
-static const SimpleSticker g_simpleStickers[] = {
-    {"heart", "HEART"}, {"love", "LOVE"},   {"laugh", "LOL"},
-    {"wow", "WOW"},     {"angry", "ANGRY"}, {"like", "LIKE"},
-    {"fire", "FIRE"},   {"party", "PARTY"}, {"cool", "COOL"},
-    {"kiss", "KISS"},   {"sad", "SAD"},     {"clap", "CLAP"} };
-
-static map<string, string> g_stickerMessages;
-
-static const SimpleSticker* find_simple_sticker(const string& id) {
-    for (const auto& s : g_simpleStickers)
-        if (id == s.id)
-            return &s;
-    return nullptr;
-}
-
-static bool is_simple_sticker_message(const string& content) {
-    return content.rfind("[STICKER:", 0) == 0 &&
-        content.size() > 10 &&
-        content.back() == ']';
-}
-
-static string get_simple_sticker_id(const string& content) {
-    if (!is_simple_sticker_message(content))
-        return "";
-    return content.substr(9, content.size() - 10);
-}
-
-static void draw_simple_sticker(ImDrawList* dl, const ImVec2& p,
-    const string& id, float size) {
-    const SimpleSticker* s = find_simple_sticker(id);
-    if (!s)
-        return;
-
-    ImVec2 a(p.x, p.y);
-    ImVec2 b(p.x + size, p.y + size);
-    ImVec2 c((a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f);
-
-    // Sticker vien don gian, khong phu thuoc font Emoji.
-    dl->AddCircleFilled(c, size * 0.43f, IM_COL32(255, 255, 255, 255));
-    dl->AddCircle(c, size * 0.43f, IM_COL32(210, 214, 225, 255), 32, 2.0f);
-
-    if (id == "heart" || id == "love") {
-        ImVec2 q(c.x, c.y + size * 0.05f);
-        dl->AddCircleFilled(ImVec2(q.x - size * .11f, q.y - size * .08f),
-            size * .13f, IM_COL32(240, 70, 100, 255));
-        dl->AddCircleFilled(ImVec2(q.x + size * .11f, q.y - size * .08f),
-            size * .13f, IM_COL32(240, 70, 100, 255));
-        dl->AddTriangleFilled(ImVec2(q.x - size * .23f, q.y - size * .02f),
-            ImVec2(q.x + size * .23f, q.y - size * .02f),
-            ImVec2(q.x, q.y + size * .27f),
-            IM_COL32(240, 70, 100, 255));
-    }
-    else if (id == "fire") {
-        dl->AddTriangleFilled(ImVec2(c.x, c.y - size * .25f),
-            ImVec2(c.x - size * .18f, c.y + size * .22f),
-            ImVec2(c.x + size * .18f, c.y + size * .22f),
-            IM_COL32(245, 130, 35, 255));
-        dl->AddTriangleFilled(ImVec2(c.x, c.y - size * .08f),
-            ImVec2(c.x - size * .08f, c.y + size * .18f),
-            ImVec2(c.x + size * .08f, c.y + size * .18f),
-            IM_COL32(255, 210, 55, 255));
-    }
-    else if (id == "like") {
-        dl->AddRectFilled(ImVec2(c.x - size * .10f, c.y - size * .22f),
-            ImVec2(c.x + size * .12f, c.y + size * .20f),
-            IM_COL32(70, 125, 235, 255), 5.0f);
-        dl->AddRectFilled(ImVec2(c.x - size * .22f, c.y - size * .02f),
-            ImVec2(c.x - size * .08f, c.y + size * .20f),
-            IM_COL32(70, 125, 235, 255), 4.0f);
-    }
-    else {
-        dl->AddCircleFilled(c, size * .16f, IM_COL32(80, 90, 110, 255));
-        dl->AddCircleFilled(ImVec2(c.x - size * .09f, c.y - size * .05f),
-            size * .035f, IM_COL32(255, 255, 255, 255));
-        dl->AddCircleFilled(ImVec2(c.x + size * .09f, c.y - size * .05f),
-            size * .035f, IM_COL32(255, 255, 255, 255));
-    }
-
-    ImVec2 ts = ImGui::CalcTextSize(s->label);
-    dl->AddText(ImVec2(c.x - ts.x * .5f, b.y - ts.y - size * .06f),
-        IM_COL32(65, 70, 85, 255), s->label);
-}
-
-static void send_simple_sticker(const string& id) {
-    if (currentState == CONNECTED && find_simple_sticker(id))
-        send_raw_line("[STICKER]|" + id);
-}
-// ================= END STICKER - ADD ONLY =================
-
 // Asio Network Objects
 asio::io_context* io_context_ptr = nullptr;
 tcp::socket* peer_socket = nullptr;
@@ -477,25 +378,6 @@ void async_read_loop() {
                         add_chat_log(msg_id, remote_name, remote_id, remote_role, ts,
                             r_name, r_text, content, false);
                         send_raw_line("[ACK]|" + msg_id);
-
-                    }
-                    else if (line.rfind("[STICKER]|", 0) == 0) {
-                        // ================= STICKER RECEIVE - ADD ONLY =================
-                        stringstream ss(line);
-                        string tag, stickerId;
-                        getline(ss, tag, '|');
-                        getline(ss, stickerId);
-                        if (find_simple_sticker(stickerId)) {
-                            string stickerMsgId = generate_msg_id();
-                            g_stickerMessages[stickerMsgId] = stickerId;
-                            string remote_name =
-                                peer_username.empty() ? "Peer" : peer_username;
-                            add_chat_log(stickerMsgId, remote_name, peer_user_id,
-                                peer_role, get_current_time_str(), "", "",
-                                "[STICKER:" + stickerId + "]", false);
-                            send_raw_line("[ACK]|" + stickerMsgId);
-                        }
-                        // ================= END STICKER RECEIVE - ADD ONLY =============
                     }
                     else if (line.rfind("[TYPING]|", 0) == 0) {
                         stringstream ss(line);
@@ -811,14 +693,6 @@ void render_chat_bubble(size_t idx, ChatMessage& msg) {
     // khong dung noi dung that de tinh kich thuoc bubble.
     string displayContent =
         msg.is_deleted ? "This message was deleted." : msg.content;
-
-    // ================= STICKER RENDER - ADD ONLY =================
-    // Khong sua dong code hien thi tin nhan cu. Chi bo sung xu ly Sticker.
-    bool p2pIsSticker = is_simple_sticker_message(msg.content);
-    string p2pStickerId = p2pIsSticker ? get_simple_sticker_id(msg.content) : "";
-    if (p2pIsSticker && find_simple_sticker(p2pStickerId))
-        displayContent = " ";
-    // ================= END STICKER RENDER - ADD ONLY ==============
     bool showReplyPreview = !msg.is_deleted && !msg.reply_to_text.empty();
 
     float maxBubbleWidth =
@@ -920,15 +794,6 @@ void render_chat_bubble(size_t idx, ChatMessage& msg) {
             ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(0, 0, 0, 0));
             ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4(0, 0, 0, 0));
 
-            // ================= STICKER DRAW - ADD ONLY =================
-            if (p2pIsSticker && find_simple_sticker(p2pStickerId)) {
-                float stickerSize = 112.0f;
-                ImVec2 stickerPos = ImGui::GetCursorScreenPos();
-                draw_simple_sticker(ImGui::GetWindowDrawList(), stickerPos,
-                    p2pStickerId, stickerSize);
-                ImGui::Dummy(ImVec2(stickerSize, stickerSize));
-            }
-            // ================= END STICKER DRAW - ADD ONLY ==============
             ImGui::InputTextMultiline(("##msg_" + msg.id).c_str(),
                 (char*)displayContent.c_str(),
                 displayContent.size() + 1,
@@ -1451,46 +1316,6 @@ int main() {
                 }
                 ImGui::PopStyleVar();
                 // --- BỘ CHỌN EMOJI POPUP (CHUẨN 16-BIT UNICODE) ---
-                        // ================= STICKER BUTTON - ADD ONLY =================
-                ImGui::SameLine();
-                if (ImGui::Button("Sticker", ImVec2(64, 0))) {
-                    ImGui::OpenPopup("SimpleStickerPopup");
-                }
-
-                if (ImGui::BeginPopup("SimpleStickerPopup")) {
-                    ImGui::Text("Choose Sticker");
-                    ImGui::Separator();
-
-                    const int stickerCols = 4;
-                    for (int sIdx = 0; sIdx < IM_ARRAYSIZE(g_simpleStickers); ++sIdx) {
-                        if (sIdx % stickerCols != 0)
-                            ImGui::SameLine();
-
-                        ImGui::PushID(sIdx);
-                        ImVec2 buttonPos = ImGui::GetCursorScreenPos();
-
-                        if (ImGui::InvisibleButton("##sticker", ImVec2(70, 70))) {
-                            string stickerId = g_simpleStickers[sIdx].id;
-                            string display_name =
-                                (strlen(username) > 0) ? string(username) : "Anonymous";
-                            string stickerMsgId = generate_msg_id();
-
-                            g_stickerMessages[stickerMsgId] = stickerId;
-                            send_simple_sticker(stickerId);
-                            add_chat_log(stickerMsgId, display_name, local_user_id,
-                                local_role, get_current_time_str(), "", "",
-                                "[STICKER:" + stickerId + "]", true);
-                            ImGui::CloseCurrentPopup();
-                        }
-
-                        draw_simple_sticker(ImGui::GetWindowDrawList(), buttonPos,
-                            g_simpleStickers[sIdx].id, 58.0f);
-                        ImGui::PopID();
-                    }
-
-                    ImGui::EndPopup();
-                }
-                // ================= END STICKER BUTTON - ADD ONLY ==============
                 if (ImGui::Button("Emoji", ImVec2(54, 0))) {
                     ImGui::OpenPopup("EmojiPickerPopup");
                 }
@@ -1518,6 +1343,51 @@ int main() {
                     }
                     ImGui::EndPopup();
                 }
+
+                // ================= STICKER - CHI THEM, KHONG SUA CODE CU =================
+                // Sticker duoc chen truc tiep vao messageBuf, vi vay he thong [MSG]
+                // hien tai cua ban van giu nguyen va tu dong gui Sticker qua TCP.
+                if (ImGui::Button("Sticker", ImVec2(70, 0))) {
+                    ImGui::OpenPopup("StickerOnlyAddPopup");
+                }
+
+                if (ImGui::BeginPopup("StickerOnlyAddPopup")) {
+                    ImGui::TextColored(ImVec4(0.45f, 0.75f, 1.00f, 1.00f),
+                        "Choose Sticker");
+                    ImGui::Separator();
+
+                    const char* stickersOnlyAdd[] = {
+                        "❤️", "😂", "😍", "😮",
+                        "😢", "😡", "👍", "👏",
+                        "🔥", "🎉", "😘", "😎" };
+
+                    const int stickerColsOnlyAdd = 4;
+                    for (int stickerIndexOnlyAdd = 0;
+                        stickerIndexOnlyAdd < IM_ARRAYSIZE(stickersOnlyAdd);
+                        ++stickerIndexOnlyAdd) {
+                        if (stickerIndexOnlyAdd % stickerColsOnlyAdd != 0)
+                            ImGui::SameLine();
+
+                        ImGui::PushID(stickerIndexOnlyAdd);
+                        if (ImGui::Button(stickersOnlyAdd[stickerIndexOnlyAdd],
+                            ImVec2(42, 36))) {
+                            if (strlen(messageBuf) +
+                                strlen(stickersOnlyAdd[stickerIndexOnlyAdd]) <
+                                sizeof(messageBuf)) {
+                                strcat_s(messageBuf, sizeof(messageBuf),
+                                    stickersOnlyAdd[stickerIndexOnlyAdd]);
+                            }
+                            ImGui::CloseCurrentPopup();
+                        }
+                        ImGui::PopID();
+                    }
+
+                    ImGui::Separator();
+                    ImGui::TextDisabled("Sticker se duoc gui bang nut Send");
+                    ImGui::EndPopup();
+                }
+                // ================= END STICKER - CHI THEM =================
+
                 ImGui::SameLine();
                 ImGui::PushItemWidth(-70);
                 bool isInputChanged =
