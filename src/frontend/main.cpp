@@ -18,6 +18,7 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include "sticker_addon.h"
 
 using namespace std;
 using asio::ip::tcp;
@@ -1315,6 +1316,7 @@ int main() {
                     }
                 }
                 ImGui::PopStyleVar();
+                StickerAddon::DrawStickerPicker(messageBuf, IM_ARRAYSIZE(messageBuf));
                 // --- BỘ CHỌN EMOJI POPUP (CHUẨN 16-BIT UNICODE) ---
                 if (ImGui::Button("Emoji", ImVec2(54, 0))) {
                     ImGui::OpenPopup("EmojiPickerPopup");
@@ -1343,51 +1345,6 @@ int main() {
                     }
                     ImGui::EndPopup();
                 }
-
-                // ================= STICKER - CHI THEM, KHONG SUA CODE CU =================
-                // Sticker duoc chen truc tiep vao messageBuf, vi vay he thong [MSG]
-                // hien tai cua ban van giu nguyen va tu dong gui Sticker qua TCP.
-                if (ImGui::Button("Sticker", ImVec2(70, 0))) {
-                    ImGui::OpenPopup("StickerOnlyAddPopup");
-                }
-
-                if (ImGui::BeginPopup("StickerOnlyAddPopup")) {
-                    ImGui::TextColored(ImVec4(0.45f, 0.75f, 1.00f, 1.00f),
-                        "Choose Sticker");
-                    ImGui::Separator();
-
-                    const char* stickersOnlyAdd[] = {
-                        "❤️", "😂", "😍", "😮",
-                        "😢", "😡", "👍", "👏",
-                        "🔥", "🎉", "😘", "😎" };
-
-                    const int stickerColsOnlyAdd = 4;
-                    for (int stickerIndexOnlyAdd = 0;
-                        stickerIndexOnlyAdd < IM_ARRAYSIZE(stickersOnlyAdd);
-                        ++stickerIndexOnlyAdd) {
-                        if (stickerIndexOnlyAdd % stickerColsOnlyAdd != 0)
-                            ImGui::SameLine();
-
-                        ImGui::PushID(stickerIndexOnlyAdd);
-                        if (ImGui::Button(stickersOnlyAdd[stickerIndexOnlyAdd],
-                            ImVec2(42, 36))) {
-                            if (strlen(messageBuf) +
-                                strlen(stickersOnlyAdd[stickerIndexOnlyAdd]) <
-                                sizeof(messageBuf)) {
-                                strcat_s(messageBuf, sizeof(messageBuf),
-                                    stickersOnlyAdd[stickerIndexOnlyAdd]);
-                            }
-                            ImGui::CloseCurrentPopup();
-                        }
-                        ImGui::PopID();
-                    }
-
-                    ImGui::Separator();
-                    ImGui::TextDisabled("Sticker se duoc gui bang nut Send");
-                    ImGui::EndPopup();
-                }
-                // ================= END STICKER - CHI THEM =================
-
                 ImGui::SameLine();
                 ImGui::PushItemWidth(-70);
                 bool isInputChanged =
