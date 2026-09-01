@@ -53,7 +53,7 @@ enum AppState { IDLE, WAITING_FOR_PEER, CONNECTED, DISCONNECTED_NOTICE };
 
 // --- GLOBAL VARIABLES & STATE ---
 mutex chat_mutex;
-vector<ChatMessage> chatHistoryList;
+vector<string> chatHistoryList;
 int messageCounter = 0;
 
 // Local & Peer Identification
