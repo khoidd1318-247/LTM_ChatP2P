@@ -1347,7 +1347,6 @@ int main() {
                 StickerAddon::DrawStickerPicker(
                     messageBuf,
                     IM_ARRAYSIZE(messageBuf));
-
                 ImGui::SameLine();
                 ImGui::PushItemWidth(-70);
                 bool isInputChanged =
