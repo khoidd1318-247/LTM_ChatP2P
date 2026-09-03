@@ -1316,7 +1316,6 @@ int main() {
                     }
                 }
                 ImGui::PopStyleVar();
-                StickerAddon::DrawStickerPicker(messageBuf, IM_ARRAYSIZE(messageBuf));
                 // --- BỘ CHỌN EMOJI POPUP (CHUẨN 16-BIT UNICODE) ---
                 if (ImGui::Button("Emoji", ImVec2(54, 0))) {
                     ImGui::OpenPopup("EmojiPickerPopup");
@@ -1345,6 +1344,13 @@ int main() {
                     }
                     ImGui::EndPopup();
                 }
+                
+                // THÊM STICKER PICKER
+                
+
+                StickerAddon::DrawStickerPicker(
+                    messageBuf,
+                    IM_ARRAYSIZE(messageBuf));
                 ImGui::SameLine();
                 ImGui::PushItemWidth(-70);
                 bool isInputChanged =
