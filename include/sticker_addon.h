@@ -1,432 +1,909 @@
 #pragma once
+
 #include "imgui.h"
 #include <cstring>
 #include <cstddef>
+#include <cmath>
 
 namespace StickerAddon
 {
     // ============================================================
-    // ZALO-LIKE STICKER PICKER
-    // ------------------------------------------------------------
-    // Không dùng emoji font của Windows.
-    // Sticker được vẽ trực tiếp bằng ImGui DrawList nên chắc chắn
-    // nhìn thấy trên mọi máy có ImGui.
+    // THÊM MÃ STICKER VÀO Ô NHẬP TIN NHẮN
     // ============================================================
-
-    inline void AppendSticker(char* buffer, std::size_t capacity, const char* text)
+    inline void AppendSticker(
+        char* messageBuffer,
+        std::size_t capacity,
+        const char* sticker)
     {
-        if (!buffer || !text || capacity == 0)
+        if (!messageBuffer || !sticker || capacity == 0)
             return;
 
-        const std::size_t current = std::strlen(buffer);
-        const std::size_t add = std::strlen(text);
+        std::size_t current =
+            std::strlen(messageBuffer);
 
-        if (current + add + 1 < capacity)
-        {
-            if (current > 0)
-                std::strcat(buffer, " ");
+        std::size_t add =
+            std::strlen(sticker);
 
-            std::strcat(buffer, text);
-        }
-    }
+        std::size_t space =
+            (current > 0) ? 1 : 0;
 
-    struct StickerItem
-    {
-        const char* sendText;
-        const char* name;
-        int type;
-    };
-
-    // 0 smile, 1 laugh, 2 love, 3 heart, 4 cry, 5 angry,
-    // 6 cool, 7 hug, 8 wow, 9 thumbs, 10 clap, 11 pray,
-    // 12 fire, 13 gift, 14 party, 15 sad, 16 wink, 17 kiss,
-    // 18 shock, 19 sleepy, 20 happy, 21 ok, 22 strong, 23 thanks
-    inline const StickerItem& GetSticker(int index)
-    {
-        static const StickerItem items[] =
-        {
-            {":)",       "Yêu quá",     2},
-            {"XD",       "Mê luôn",     1},
-            {":*",       "Hôn nè",     17},
-            {"<3",       "Thương bạn",  3},
-
-            {"=D",        "Cười xỉu",   1},
-            {"haha",      "Haha",       1},
-            {":D",        "Vui quá",    0},
-            {":P",        "Trêu nè",    16},
-
-            {"T_T",       "Năn nỉ đó",  15},
-            {":'(",       "Buồn quá",   4},
-            {":(",        "Huhu",       4},
-            {">:(",       "Giận rồi",   5},
-
-            {"B-)",       "Ngầu chưa",  6},
-            {"(hug)",     "Ôm nè",      7},
-            {"WOW!",      "Tuyệt vời",  8},
-            {":-O",       "Ngạc nhiên", 18},
-
-            {"OK",        "Ok luôn",    21},
-            {"CLAP",      "Hay quá",    10},
-            {"THANKS",    "Cảm ơn",     23},
-            {"FIGHT!",    "Cố lên",     22},
-
-            {"YAY!",      "Chúc mừng",  14},
-            {"GIFT",      "Tặng bạn",   13},
-            {"FIRE!",     "Đỉnh quá",   12},
-            {"100%",      "Chuẩn luôn",  9}
-        };
-
-        return items[index % (int)(sizeof(items) / sizeof(items[0]))];
-    }
-
-    inline void DrawHeart(ImDrawList* draw, ImVec2 c, float s)
-    {
-        // Trái tim đơn giản bằng hai hình tròn + tam giác.
-        draw->AddCircleFilled(ImVec2(c.x - s * 0.23f, c.y - s * 0.12f),
-            s * 0.28f, IM_COL32(245, 75, 105, 255));
-        draw->AddCircleFilled(ImVec2(c.x + s * 0.23f, c.y - s * 0.12f),
-            s * 0.28f, IM_COL32(245, 75, 105, 255));
-        draw->AddTriangleFilled(
-            ImVec2(c.x - s * 0.52f, c.y - s * 0.02f),
-            ImVec2(c.x + s * 0.52f, c.y - s * 0.02f),
-            ImVec2(c.x, c.y + s * 0.62f),
-            IM_COL32(245, 75, 105, 255));
-    }
-
-    inline void DrawFace(ImDrawList* draw, ImVec2 c, float r, int type)
-    {
-        const ImU32 face = IM_COL32(255, 218, 95, 255);
-        const ImU32 outline = IM_COL32(80, 70, 55, 255);
-        const ImU32 black = IM_COL32(45, 45, 50, 255);
-        const ImU32 white = IM_COL32(255, 255, 255, 255);
-
-        if (type == 2)
-        {
-            DrawHeart(draw, c, r * 1.55f);
+        if (current + space + add + 1 >= capacity)
             return;
+
+        if (current > 0)
+        {
+            messageBuffer[current] = ' ';
+            current++;
+            messageBuffer[current] = '\0';
         }
 
-        if (type == 3)
+        std::memcpy(
+            messageBuffer + current,
+            sticker,
+            add + 1);
+    }
+
+
+    // ============================================================
+    // VẼ MẶT STICKER
+    // ============================================================
+    inline void DrawFace(
+        ImDrawList* draw,
+        ImVec2 center,
+        float radius,
+        int type)
+    {
+        // Mặt
+        draw->AddCircleFilled(
+            center,
+            radius,
+            IM_COL32(255, 218, 80, 255));
+
+        // Viền
+        draw->AddCircle(
+            center,
+            radius,
+            IM_COL32(90, 80, 50, 255),
+            32,
+            2.0f);
+
+
+        // --------------------------------------------------------
+        // Mắt
+        // --------------------------------------------------------
+        if (type == 5)
         {
-            DrawHeart(draw, c, r * 1.35f);
+            // Nhắm mắt
+            draw->AddLine(
+                ImVec2(
+                    center.x - radius * 0.50f,
+                    center.y - radius * 0.20f),
+                ImVec2(
+                    center.x - radius * 0.15f,
+                    center.y - radius * 0.05f),
+                IM_COL32(50, 50, 50, 255),
+                2.5f);
+
+            draw->AddLine(
+                ImVec2(
+                    center.x + radius * 0.15f,
+                    center.y - radius * 0.05f),
+                ImVec2(
+                    center.x + radius * 0.50f,
+                    center.y - radius * 0.20f),
+                IM_COL32(50, 50, 50, 255),
+                2.5f);
+        }
+        else
+        {
             draw->AddCircleFilled(
-                ImVec2(c.x, c.y - r * 0.85f),
-                r * 0.28f,
-                IM_COL32(255, 255, 255, 220));
-            return;
+                ImVec2(
+                    center.x - radius * 0.32f,
+                    center.y - radius * 0.20f),
+                radius * 0.09f,
+                IM_COL32(45, 45, 45, 255));
+
+            draw->AddCircleFilled(
+                ImVec2(
+                    center.x + radius * 0.32f,
+                    center.y - radius * 0.20f),
+                radius * 0.09f,
+                IM_COL32(45, 45, 45, 255));
         }
 
-        // Mặt tròn.
-        draw->AddCircleFilled(c, r, face);
-        draw->AddCircle(c, r, outline, 0, 2.0f);
 
-        // Kiểu "cool".
-        if (type == 6)
+        // ========================================================
+        // TYPE 0 - CƯỜI
+        // ========================================================
+        if (type == 0)
         {
-            draw->AddRectFilled(
-                ImVec2(c.x - r * 0.62f, c.y - r * 0.28f),
-                ImVec2(c.x + r * 0.62f, c.y + r * 0.02f),
-                black,
+            draw->PathClear();
+
+            draw->PathArcTo(
+                ImVec2(
+                    center.x,
+                    center.y),
+                radius * 0.42f,
+                0.25f,
+                2.90f,
+                20);
+
+            draw->PathStroke(
+                IM_COL32(50, 50, 50, 255),
+                false,
+                3.0f);
+        }
+
+
+        // ========================================================
+        // TYPE 1 - CƯỜI TO
+        // ========================================================
+        else if (type == 1)
+        {
+            draw->AddEllipseFilled(
+                ImVec2(
+                    center.x,
+                    center.y + radius * 0.20f),
+                ImVec2(
+                    radius * 0.40f,
+                    radius * 0.28f),
+                IM_COL32(50, 50, 50, 255));
+        }
+
+
+        // ========================================================
+        // TYPE 2 - BUỒN
+        // ========================================================
+        else if (type == 2)
+        {
+            draw->PathClear();
+
+            draw->PathArcTo(
+                ImVec2(
+                    center.x,
+                    center.y + radius * 0.55f),
+                radius * 0.36f,
+                3.35f,
+                6.05f,
+                20);
+
+            draw->PathStroke(
+                IM_COL32(50, 50, 50, 255),
+                false,
+                3.0f);
+
+            // Nước mắt
+            draw->AddCircleFilled(
+                ImVec2(
+                    center.x + radius * 0.48f,
+                    center.y + radius * 0.20f),
+                radius * 0.10f,
+                IM_COL32(80, 170, 255, 255));
+        }
+
+
+        // ========================================================
+        // TYPE 3 - KHÓC
+        // ========================================================
+        else if (type == 3)
+        {
+            draw->AddCircleFilled(
+                ImVec2(
+                    center.x - radius * 0.32f,
+                    center.y + radius * 0.20f),
+                radius * 0.11f,
+                IM_COL32(80, 170, 255, 255));
+
+            draw->AddCircleFilled(
+                ImVec2(
+                    center.x + radius * 0.32f,
+                    center.y + radius * 0.20f),
+                radius * 0.11f,
+                IM_COL32(80, 170, 255, 255));
+
+            draw->PathClear();
+
+            draw->PathArcTo(
+                ImVec2(
+                    center.x,
+                    center.y + radius * 0.45f),
+                radius * 0.32f,
+                3.30f,
+                6.10f,
+                20);
+
+            draw->PathStroke(
+                IM_COL32(50, 50, 50, 255),
+                false,
+                3.0f);
+        }
+
+
+        // ========================================================
+        // TYPE 4 - TỨC GIẬN
+        // ========================================================
+        else if (type == 4)
+        {
+            draw->AddLine(
+                ImVec2(
+                    center.x - radius * 0.55f,
+                    center.y - radius * 0.45f),
+                ImVec2(
+                    center.x - radius * 0.10f,
+                    center.y - radius * 0.28f),
+                IM_COL32(50, 50, 50, 255),
+                3.0f);
+
+            draw->AddLine(
+                ImVec2(
+                    center.x + radius * 0.10f,
+                    center.y - radius * 0.28f),
+                ImVec2(
+                    center.x + radius * 0.55f,
+                    center.y - radius * 0.45f),
+                IM_COL32(50, 50, 50, 255),
+                3.0f);
+
+            draw->AddLine(
+                ImVec2(
+                    center.x - radius * 0.30f,
+                    center.y + radius * 0.35f),
+                ImVec2(
+                    center.x + radius * 0.30f,
+                    center.y + radius * 0.35f),
+                IM_COL32(50, 50, 50, 255),
+                3.0f);
+        }
+
+
+        // ========================================================
+        // TYPE 5 - NHÁY MẮT
+        // ========================================================
+        else if (type == 5)
+        {
+            draw->PathClear();
+
+            draw->PathArcTo(
+                ImVec2(
+                    center.x,
+                    center.y + radius * 0.05f),
+                radius * 0.35f,
+                0.25f,
+                2.90f,
+                20);
+
+            draw->PathStroke(
+                IM_COL32(50, 50, 50, 255),
+                false,
+                3.0f);
+        }
+
+
+        // ========================================================
+        // TYPE 6 - NGẠC NHIÊN
+        // ========================================================
+        else if (type == 6)
+        {
+            draw->AddCircleFilled(
+                ImVec2(
+                    center.x,
+                    center.y + radius * 0.25f),
+                radius * 0.18f,
+                IM_COL32(50, 50, 50, 255));
+        }
+
+
+        // ========================================================
+        // TYPE 7 - CƯỜI NHẸ
+        // ========================================================
+        else if (type == 7)
+        {
+            draw->AddLine(
+                ImVec2(
+                    center.x - radius * 0.28f,
+                    center.y + radius * 0.20f),
+                ImVec2(
+                    center.x + radius * 0.28f,
+                    center.y + radius * 0.20f),
+                IM_COL32(50, 50, 50, 255),
+                3.0f);
+        }
+    }
+
+
+    // ============================================================
+    // VẼ TRÁI TIM
+    // ============================================================
+    inline void DrawHeart(
+        ImDrawList* draw,
+        ImVec2 center,
+        float size)
+    {
+        draw->AddCircleFilled(
+            ImVec2(
+                center.x - size * 0.30f,
+                center.y - size * 0.10f),
+            size * 0.32f,
+            IM_COL32(255, 80, 110, 255));
+
+        draw->AddCircleFilled(
+            ImVec2(
+                center.x + size * 0.30f,
+                center.y - size * 0.10f),
+            size * 0.32f,
+            IM_COL32(255, 80, 110, 255));
+
+        ImVec2 points[3];
+
+        points[0] = ImVec2(
+            center.x - size * 0.62f,
+            center.y - size * 0.05f);
+
+        points[1] = ImVec2(
+            center.x + size * 0.62f,
+            center.y - size * 0.05f);
+
+        points[2] = ImVec2(
+            center.x,
+            center.y + size * 0.75f);
+
+        draw->AddTriangleFilled(
+            points[0],
+            points[1],
+            points[2],
+            IM_COL32(255, 80, 110, 255));
+    }
+
+
+    // ============================================================
+    // VẼ NGÔI SAO
+    // ============================================================
+    inline void DrawStar(
+        ImDrawList* draw,
+        ImVec2 center,
+        float radius)
+    {
+        ImVec2 points[10];
+
+        for (int i = 0; i < 10; ++i)
+        {
+            float angle =
+                -3.14159265358979323846f * 0.5f +
+                (float)i * 3.14159265358979323846f / 5.0f;
+            float r =
+                (i % 2 == 0)
+                ? radius
+                : radius * 0.45f;
+
+            points[i] = ImVec2(
+                center.x + std::cos(angle) * r,
+                center.y + std::sin(angle) * r);
+        }
+
+        draw->AddConvexPolyFilled(
+            points,
+            10,
+            IM_COL32(255, 215, 60, 255));
+    }
+
+
+    // ============================================================
+    // VẼ THUMBS UP
+    // ============================================================
+    inline void DrawThumb(
+        ImDrawList* draw,
+        ImVec2 center,
+        float size)
+    {
+        draw->AddRectFilled(
+            ImVec2(
+                center.x - size * 0.20f,
+                center.y - size * 0.10f),
+            ImVec2(
+                center.x + size * 0.55f,
+                center.y + size * 0.35f),
+            IM_COL32(80, 190, 100, 255),
+            5.0f);
+
+        draw->AddRectFilled(
+            ImVec2(
+                center.x - size * 0.50f,
+                center.y - size * 0.10f),
+            ImVec2(
+                center.x - size * 0.20f,
+                center.y + size * 0.45f),
+            IM_COL32(80, 190, 100, 255),
+            4.0f);
+
+        draw->AddRectFilled(
+            ImVec2(
+                center.x - size * 0.05f,
+                center.y - size * 0.65f),
+            ImVec2(
+                center.x + size * 0.22f,
+                center.y - size * 0.05f),
+            IM_COL32(80, 190, 100, 255),
+            4.0f);
+    }
+
+
+    // ============================================================
+    // VẼ NGÔI SAO + TIM + MẶT...
+    // ============================================================
+    inline void DrawStickerGraphic(
+        int type,
+        ImVec2 pos,
+        ImVec2 size)
+    {
+        ImDrawList* draw =
+            ImGui::GetWindowDrawList();
+
+        ImVec2 center(
+            pos.x + size.x * 0.5f,
+            pos.y + size.y * 0.5f);
+
+        float radius =
+            (size.x < size.y
+                ? size.x
+                : size.y) * 0.34f;
+
+
+        if (type < 8)
+        {
+            DrawFace(
+                draw,
+                center,
+                radius,
+                type);
+        }
+        else if (type == 8)
+        {
+            DrawHeart(
+                draw,
+                center,
+                radius * 1.55f);
+        }
+        else if (type == 9)
+        {
+            DrawStar(
+                draw,
+                center,
+                radius * 1.25f);
+        }
+        else if (type == 10)
+        {
+            DrawThumb(
+                draw,
+                center,
+                radius * 1.3f);
+        }
+        else if (type == 11)
+        {
+            // Xanh + check
+            draw->AddCircleFilled(
+                center,
+                radius * 1.05f,
+                IM_COL32(80, 190, 120, 255));
+
+            draw->AddLine(
+                ImVec2(
+                    center.x - radius * 0.50f,
+                    center.y),
+                ImVec2(
+                    center.x - radius * 0.10f,
+                    center.y + radius * 0.40f),
+                IM_COL32(255, 255, 255, 255),
                 4.0f);
 
             draw->AddLine(
-                ImVec2(c.x - r * 0.58f, c.y - r * 0.22f),
-                ImVec2(c.x - r * 0.08f, c.y - r * 0.22f),
-                white, 2.0f);
+                ImVec2(
+                    center.x - radius * 0.10f,
+                    center.y + radius * 0.40f),
+                ImVec2(
+                    center.x + radius * 0.60f,
+                    center.y - radius * 0.45f),
+                IM_COL32(255, 255, 255, 255),
+                4.0f);
+        }
+        else if (type == 12)
+        {
+            // X đỏ
+            draw->AddCircleFilled(
+                center,
+                radius * 1.05f,
+                IM_COL32(230, 80, 80, 255));
 
             draw->AddLine(
-                ImVec2(c.x + r * 0.08f, c.y - r * 0.22f),
-                ImVec2(c.x + r * 0.58f, c.y - r * 0.22f),
-                white, 2.0f);
+                ImVec2(
+                    center.x - radius * 0.45f,
+                    center.y - radius * 0.45f),
+                ImVec2(
+                    center.x + radius * 0.45f,
+                    center.y + radius * 0.45f),
+                IM_COL32(255, 255, 255, 255),
+                4.0f);
 
-            draw->AddBezierCubic(
-                ImVec2(c.x - r * 0.35f, c.y + r * 0.28f),
-                ImVec2(c.x - r * 0.05f, c.y + r * 0.55f),
-                ImVec2(c.x + r * 0.05f, c.y + r * 0.55f),
-                ImVec2(c.x + r * 0.35f, c.y + r * 0.28f),
-                black, 2.5f);
-            return;
+            draw->AddLine(
+                ImVec2(
+                    center.x + radius * 0.45f,
+                    center.y - radius * 0.45f),
+                ImVec2(
+                    center.x - radius * 0.45f,
+                    center.y + radius * 0.45f),
+                IM_COL32(255, 255, 255, 255),
+                4.0f);
         }
-
-        // Mắt.
-        if (type == 5)
+        else if (type == 13)
         {
-            draw->AddLine(ImVec2(c.x - r * 0.55f, c.y - r * 0.25f),
-                ImVec2(c.x - r * 0.12f, c.y - r * 0.38f), black, 3.0f);
-            draw->AddLine(ImVec2(c.x + r * 0.12f, c.y - r * 0.38f),
-                ImVec2(c.x + r * 0.55f, c.y - r * 0.25f), black, 3.0f);
+            // Bong bóng chat
+            draw->AddRectFilled(
+                ImVec2(
+                    center.x - radius * 0.75f,
+                    center.y - radius * 0.55f),
+                ImVec2(
+                    center.x + radius * 0.75f,
+                    center.y + radius * 0.40f),
+                IM_COL32(90, 160, 240, 255),
+                8.0f);
+
+            draw->AddTriangleFilled(
+                ImVec2(
+                    center.x - radius * 0.45f,
+                    center.y + radius * 0.35f),
+                ImVec2(
+                    center.x - radius * 0.15f,
+                    center.y + radius * 0.80f),
+                ImVec2(
+                    center.x + radius * 0.05f,
+                    center.y + radius * 0.35f),
+                IM_COL32(90, 160, 240, 255));
+        }
+        else if (type == 14)
+        {
+            // Tia chớp
+            ImVec2 p[6];
+
+            p[0] = ImVec2(
+                center.x,
+                center.y - radius);
+
+            p[1] = ImVec2(
+                center.x - radius * 0.35f,
+                center.y);
+
+            p[2] = ImVec2(
+                center.x - radius * 0.05f,
+                center.y);
+
+            p[3] = ImVec2(
+                center.x - radius * 0.30f,
+                center.y + radius);
+
+            p[4] = ImVec2(
+                center.x + radius * 0.50f,
+                center.y - radius * 0.10f);
+
+            p[5] = ImVec2(
+                center.x + radius * 0.10f,
+                center.y - radius * 0.10f);
+
+            draw->AddConvexPolyFilled(
+                p,
+                6,
+                IM_COL32(255, 210, 50, 255));
+        }
+        else if (type == 15)
+        {
+            // Mặt xanh
+            draw->AddCircleFilled(
+                center,
+                radius,
+                IM_COL32(90, 190, 220, 255));
+
+            draw->AddCircleFilled(
+                ImVec2(
+                    center.x - radius * 0.30f,
+                    center.y - radius * 0.15f),
+                radius * 0.08f,
+                IM_COL32(40, 60, 70, 255));
+
+            draw->AddCircleFilled(
+                ImVec2(
+                    center.x + radius * 0.30f,
+                    center.y - radius * 0.15f),
+                radius * 0.08f,
+                IM_COL32(40, 60, 70, 255));
+
+            draw->AddCircleFilled(
+                ImVec2(
+                    center.x,
+                    center.y + radius * 0.30f),
+                radius * 0.12f,
+                IM_COL32(40, 60, 70, 255));
         }
         else if (type == 16)
         {
-            draw->AddLine(ImVec2(c.x - r * 0.55f, c.y - r * 0.25f),
-                ImVec2(c.x - r * 0.12f, c.y - r * 0.25f), black, 3.0f);
-            draw->AddCircleFilled(ImVec2(c.x + r * 0.32f, c.y - r * 0.25f),
-                r * 0.09f, black);
-        }
-        else
-        {
-            draw->AddCircleFilled(ImVec2(c.x - r * 0.34f, c.y - r * 0.25f),
-                r * 0.09f, black);
-            draw->AddCircleFilled(ImVec2(c.x + r * 0.34f, c.y - r * 0.25f),
-                r * 0.09f, black);
-        }
+            // Mặt tím
+            draw->AddCircleFilled(
+                center,
+                radius,
+                IM_COL32(170, 110, 220, 255));
 
-        // Miệng / biểu cảm.
-        if (type == 4 || type == 15)
-        {
-            draw->AddCircleFilled(ImVec2(c.x, c.y + r * 0.32f),
-                r * 0.12f, black);
-            draw->AddLine(ImVec2(c.x - r * 0.48f, c.y + r * 0.08f),
-                ImVec2(c.x - r * 0.60f, c.y + r * 0.35f),
-                IM_COL32(70, 150, 255, 255), 2.0f);
-            draw->AddLine(ImVec2(c.x + r * 0.48f, c.y + r * 0.08f),
-                ImVec2(c.x + r * 0.60f, c.y + r * 0.35f),
-                IM_COL32(70, 150, 255, 255), 2.0f);
-        }
-        else if (type == 8 || type == 18)
-        {
-            draw->AddCircleFilled(ImVec2(c.x, c.y + r * 0.25f),
-                r * 0.18f, black);
-        }
-        else if (type == 1 || type == 0 || type == 20)
-        {
-            draw->AddBezierCubic(
-                ImVec2(c.x - r * 0.35f, c.y + r * 0.20f),
-                ImVec2(c.x - r * 0.10f, c.y + r * 0.52f),
-                ImVec2(c.x + r * 0.10f, c.y + r * 0.52f),
-                ImVec2(c.x + r * 0.35f, c.y + r * 0.20f),
-                black, 2.5f);
-        }
-        else if (type == 6)
-        {
-            // Đã xử lý ở trên.
-        }
-        else
-        {
-            draw->AddLine(ImVec2(c.x - r * 0.28f, c.y + r * 0.32f),
-                ImVec2(c.x + r * 0.28f, c.y + r * 0.32f),
-                black, 2.5f);
-        }
+            draw->AddCircleFilled(
+                ImVec2(
+                    center.x - radius * 0.30f,
+                    center.y - radius * 0.15f),
+                radius * 0.09f,
+                IM_COL32(50, 40, 60, 255));
 
-        // Một số hiệu ứng.
-        if (type == 2 || type == 17)
-        {
-            DrawHeart(draw, ImVec2(c.x + r * 0.72f, c.y - r * 0.72f), r * 0.48f);
+            draw->AddCircleFilled(
+                ImVec2(
+                    center.x + radius * 0.30f,
+                    center.y - radius * 0.15f),
+                radius * 0.09f,
+                IM_COL32(50, 40, 60, 255));
+
+            draw->PathClear();
+
+            draw->PathArcTo(
+                ImVec2(
+                    center.x,
+                    center.y + radius * 0.20f),
+                radius * 0.35f,
+                0.20f,
+                2.90f,
+                20);
+
+            draw->PathStroke(
+                IM_COL32(50, 40, 60, 255),
+                false,
+                3.0f);
         }
-        if (type == 12)
+        else if (type == 17)
         {
-            draw->AddTriangleFilled(
-                ImVec2(c.x, c.y - r * 1.25f),
-                ImVec2(c.x - r * 0.38f, c.y - r * 0.55f),
-                ImVec2(c.x + r * 0.38f, c.y - r * 0.55f),
-                IM_COL32(255, 110, 25, 255));
+            // Tim nhỏ
+            DrawHeart(
+                draw,
+                center,
+                radius * 1.0f);
+        }
+        else if (type == 18)
+        {
+            // Sao nhỏ
+            DrawStar(
+                draw,
+                center,
+                radius * 0.90f);
+        }
+        else if (type == 19)
+        {
+            // Check lớn
+            draw->AddCircleFilled(
+                center,
+                radius,
+                IM_COL32(80, 180, 120, 255));
+
+            draw->AddLine(
+                ImVec2(
+                    center.x - radius * 0.45f,
+                    center.y),
+                ImVec2(
+                    center.x - radius * 0.10f,
+                    center.y + radius * 0.35f),
+                IM_COL32(255, 255, 255, 255),
+                4.0f);
+
+            draw->AddLine(
+                ImVec2(
+                    center.x - radius * 0.10f,
+                    center.y + radius * 0.35f),
+                ImVec2(
+                    center.x + radius * 0.55f,
+                    center.y - radius * 0.40f),
+                IM_COL32(255, 255, 255, 255),
+                4.0f);
         }
     }
 
-    inline void DrawSpecialSticker(ImDrawList* draw, ImVec2 c, float r, int type)
-    {
-        const ImU32 black = IM_COL32(45, 45, 50, 255);
-        const ImU32 white = IM_COL32(255, 255, 255, 255);
 
-        if (type == 3)
-        {
-            DrawHeart(draw, c, r * 1.25f);
-            return;
-        }
-
-        if (type == 7)
-        {
-            // Hai khuôn mặt đang ôm nhau.
-            DrawFace(draw, ImVec2(c.x - r * 0.42f, c.y), r * 0.72f, 0);
-            DrawFace(draw, ImVec2(c.x + r * 0.42f, c.y), r * 0.72f, 2);
-            return;
-        }
-
-        if (type == 9)
-        {
-            draw->AddCircleFilled(c, r, IM_COL32(255, 218, 95, 255));
-            draw->AddCircle(c, r, black, 0, 2.0f);
-            draw->AddLine(ImVec2(c.x - r * 0.35f, c.y - r * 0.20f),
-                ImVec2(c.x - r * 0.35f, c.y + r * 0.08f), black, 3.0f);
-            draw->AddLine(ImVec2(c.x + r * 0.35f, c.y - r * 0.20f),
-                ImVec2(c.x + r * 0.35f, c.y + r * 0.08f), black, 3.0f);
-            draw->AddLine(ImVec2(c.x - r * 0.38f, c.y + r * 0.34f),
-                ImVec2(c.x + r * 0.38f, c.y + r * 0.34f), black, 3.0f);
-            return;
-        }
-
-        if (type == 10)
-        {
-            // Hai bàn tay vỗ.
-            draw->AddRectFilled(
-                ImVec2(c.x - r * 0.65f, c.y - r * 0.30f),
-                ImVec2(c.x - r * 0.05f, c.y + r * 0.65f),
-                IM_COL32(255, 205, 145, 255), 8.0f);
-            draw->AddRectFilled(
-                ImVec2(c.x + r * 0.05f, c.y - r * 0.30f),
-                ImVec2(c.x + r * 0.65f, c.y + r * 0.65f),
-                IM_COL32(255, 205, 145, 255), 8.0f);
-            draw->AddLine(ImVec2(c.x - r * 0.9f, c.y - r * 0.55f),
-                ImVec2(c.x - r * 0.75f, c.y - r * 0.80f), white, 3.0f);
-            draw->AddLine(ImVec2(c.x + r * 0.9f, c.y - r * 0.55f),
-                ImVec2(c.x + r * 0.75f, c.y - r * 0.80f), white, 3.0f);
-            return;
-        }
-
-        if (type == 11)
-        {
-            draw->AddCircleFilled(ImVec2(c.x - r * 0.25f, c.y),
-                r * 0.48f, IM_COL32(255, 205, 145, 255));
-            draw->AddCircleFilled(ImVec2(c.x + r * 0.25f, c.y),
-                r * 0.48f, IM_COL32(255, 205, 145, 255));
-            draw->AddLine(ImVec2(c.x - r * 0.10f, c.y - r * 0.42f),
-                ImVec2(c.x - r * 0.10f, c.y + r * 0.42f), black, 2.0f);
-            return;
-        }
-
-        if (type == 13)
-        {
-            draw->AddRectFilled(
-                ImVec2(c.x - r * 0.60f, c.y - r * 0.48f),
-                ImVec2(c.x + r * 0.60f, c.y + r * 0.55f),
-                IM_COL32(240, 95, 125, 255), 6.0f);
-            draw->AddLine(ImVec2(c.x, c.y - r * 0.48f),
-                ImVec2(c.x, c.y + r * 0.55f), white, 3.0f);
-            draw->AddLine(ImVec2(c.x - r * 0.60f, c.y - r * 0.05f),
-                ImVec2(c.x + r * 0.60f, c.y - r * 0.05f), white, 3.0f);
-            return;
-        }
-
-        if (type == 14)
-        {
-            draw->AddCircleFilled(c, r * 0.68f, IM_COL32(255, 215, 70, 255));
-            draw->AddLine(ImVec2(c.x - r * 1.0f, c.y),
-                ImVec2(c.x - r * 0.55f, c.y), IM_COL32(255, 190, 40, 255), 4.0f);
-            draw->AddLine(ImVec2(c.x + r * 0.55f, c.y),
-                ImVec2(c.x + r * 1.0f, c.y), IM_COL32(255, 190, 40, 255), 4.0f);
-            draw->AddLine(ImVec2(c.x, c.y - r * 1.0f),
-                ImVec2(c.x, c.y - r * 0.55f), IM_COL32(255, 190, 40, 255), 4.0f);
-            draw->AddLine(ImVec2(c.x, c.y + r * 0.55f),
-                ImVec2(c.x, c.y + r * 1.0f), IM_COL32(255, 190, 40, 255), 4.0f);
-            return;
-        }
-
-        if (type == 12)
-        {
-            // Ngọn lửa.
-            draw->AddTriangleFilled(
-                ImVec2(c.x, c.y - r * 1.0f),
-                ImVec2(c.x - r * 0.75f, c.y + r * 0.75f),
-                ImVec2(c.x + r * 0.75f, c.y + r * 0.75f),
-                IM_COL32(255, 105, 35, 255));
-            draw->AddTriangleFilled(
-                ImVec2(c.x, c.y - r * 0.45f),
-                ImVec2(c.x - r * 0.35f, c.y + r * 0.55f),
-                ImVec2(c.x + r * 0.35f, c.y + r * 0.55f),
-                IM_COL32(255, 225, 80, 255));
-            return;
-        }
-
-        // Mặc định dùng mặt.
-        DrawFace(draw, c, r, type);
-    }
-
+    // ============================================================
+    // NÚT STICKER
+    // ============================================================
     inline void DrawStickerButton(
-        const StickerItem& sticker,
         int index,
         char* messageBuffer,
         std::size_t capacity)
     {
+        ImVec2 size(
+            62.0f,
+            62.0f);
+
+        ImVec2 pos =
+            ImGui::GetCursorScreenPos();
+
         ImGui::PushID(index);
 
-        const ImVec2 cellSize(72.0f, 78.0f);
-        const ImVec2 start = ImGui::GetCursorScreenPos();
+        // Nút invisible để bắt click
+        bool clicked =
+            ImGui::InvisibleButton(
+                "##StickerButton",
+                size);
 
-        // Button trong suốt để không phụ thuộc font emoji.
-        ImGui::InvisibleButton("##sticker", cellSize);
-
-        const bool hovered = ImGui::IsItemHovered();
-        const bool clicked = ImGui::IsItemClicked();
-
-        ImDrawList* draw = ImGui::GetWindowDrawList();
-
-        ImVec2 boxMin(start.x + 2.0f, start.y + 2.0f);
-        ImVec2 boxMax(start.x + cellSize.x - 2.0f, start.y + 58.0f);
-
-        if (hovered)
-        {
-            draw->AddRectFilled(
-                boxMin, boxMax,
-                IM_COL32(105, 130, 235, 255),
-                9.0f);
-        }
-        else
-        {
-            draw->AddRectFilled(
-                boxMin, boxMax,
-                IM_COL32(78, 106, 220, 255),
-                9.0f);
-        }
-
-        ImVec2 center(
-            (boxMin.x + boxMax.x) * 0.5f,
-            (boxMin.y + boxMax.y) * 0.5f - 1.0f);
-
-        DrawSpecialSticker(draw, center, 20.0f, sticker.type);
-
-        ImVec2 textPos(
-            start.x + 2.0f,
-            start.y + 61.0f);
-
-        draw->AddText(
-            textPos,
-            IM_COL32(235, 235, 240, 255),
-            sticker.name);
-
-        if (clicked)
-            AppendSticker(messageBuffer, capacity, sticker.sendText);
+        bool hovered =
+            ImGui::IsItemHovered();
 
         ImGui::PopID();
+
+
+        ImDrawList* draw =
+            ImGui::GetWindowDrawList();
+
+
+        // --------------------------------------------------------
+        // Nền
+        // --------------------------------------------------------
+        ImU32 bg =
+            hovered
+            ? IM_COL32(90, 120, 235, 255)
+            : IM_COL32(70, 100, 215, 255);
+
+        draw->AddRectFilled(
+            pos,
+            ImVec2(
+                pos.x + size.x,
+                pos.y + size.y),
+            bg,
+            9.0f);
+
+
+        // --------------------------------------------------------
+        // Sticker
+        // --------------------------------------------------------
+        DrawStickerGraphic(
+            index,
+            pos,
+            size);
+
+
+        // --------------------------------------------------------
+        // Click
+        // --------------------------------------------------------
+        if (clicked)
+        {
+            const char* codes[] =
+            {
+                "[STICKER_SMILE]",
+                "[STICKER_LAUGH]",
+                "[STICKER_SAD]",
+                "[STICKER_CRY]",
+                "[STICKER_ANGRY]",
+                "[STICKER_WINK]",
+                "[STICKER_SURPRISE]",
+                "[STICKER_HAPPY]",
+                "[STICKER_HEART]",
+                "[STICKER_STAR]",
+                "[STICKER_THUMB]",
+                "[STICKER_OK]",
+                "[STICKER_NO]",
+                "[STICKER_CHAT]",
+                "[STICKER_LIGHTNING]",
+                "[STICKER_BLUE]",
+                "[STICKER_PURPLE]",
+                "[STICKER_HEART_SMALL]",
+                "[STICKER_STAR_SMALL]",
+                "[STICKER_CHECK]"
+            };
+
+            AppendSticker(
+                messageBuffer,
+                capacity,
+                codes[index]);
+
+            ImGui::CloseCurrentPopup();
+        }
     }
 
-    inline void DrawStickerPicker(char* messageBuffer, std::size_t capacity)
+
+    // ============================================================
+    // STICKER PICKER
+    // ============================================================
+    inline void DrawStickerPicker(
+        char* messageBuffer,
+        std::size_t capacity)
     {
-        if (ImGui::Button("Sticker", ImVec2(70.0f, 0.0f)))
-            ImGui::OpenPopup("StickerPickerPopup");
+        // --------------------------------------------------------
+        // Nút Sticker
+        // --------------------------------------------------------
+        if (ImGui::Button(
+            "Sticker",
+            ImVec2(70, 0)))
+        {
+            ImGui::OpenPopup(
+                "StickerPickerPopup");
+        }
 
-        if (!ImGui::BeginPopup("StickerPickerPopup"))
+
+        // --------------------------------------------------------
+        // Kích thước popup
+        // --------------------------------------------------------
+        ImGui::SetNextWindowSize(
+            ImVec2(350.0f, 340.0f),
+            ImGuiCond_Appearing);
+
+
+        if (!ImGui::BeginPopup(
+            "StickerPickerPopup"))
+        {
             return;
+        }
 
-        ImGui::TextUnformatted("Sticker");
+
+        // --------------------------------------------------------
+        // Tiêu đề
+        // --------------------------------------------------------
+        ImGui::TextColored(
+            ImVec4(
+                0.45f,
+                0.75f,
+                1.0f,
+                1.0f),
+            "Choose Sticker");
+
+
         ImGui::Separator();
 
+
+        // --------------------------------------------------------
+        // 4 sticker mỗi hàng
+        // --------------------------------------------------------
+        const int total = 20;
         const int columns = 4;
-        const int total = 24;
+
 
         for (int i = 0; i < total; ++i)
         {
             if (i % columns != 0)
                 ImGui::SameLine();
 
+
             DrawStickerButton(
-                GetSticker(i),
                 i,
                 messageBuffer,
                 capacity);
         }
 
+
         ImGui::Separator();
 
-        if (ImGui::Button("Xóa nội dung", ImVec2(110.0f, 0.0f)))
+
+        // --------------------------------------------------------
+        // Nút Clear
+        // --------------------------------------------------------
+        if (ImGui::Button(
+            "Clear",
+            ImVec2(80, 0)))
         {
-            if (messageBuffer && capacity > 0)
+            if (messageBuffer &&
+                capacity > 0)
+            {
                 messageBuffer[0] = '\0';
+            }
         }
+
 
         ImGui::SameLine();
 
-        if (ImGui::Button("Đóng", ImVec2(80.0f, 0.0f)))
+
+        // --------------------------------------------------------
+        // Nút Close
+        // --------------------------------------------------------
+        if (ImGui::Button(
+            "Close",
+            ImVec2(80, 0)))
+        {
             ImGui::CloseCurrentPopup();
+        }
+
 
         ImGui::EndPopup();
     }
